@@ -57,3 +57,57 @@ export function saleDisplayStatus(sale) {
   if (sale.dueDate && sale.dueDate < todayISO()) return "VENCIDO";
   return "CONFIRMADO";
 }
+
+// Clampa o dia dentro do número de dias válidos daquele mês (ex: dia 31 em
+// fevereiro vira o último dia do mês).
+const clampDay = (year, month, day) => {
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  return Math.max(1, Math.min(day, lastDay));
+};
+
+// Calcula o vencimento de UMA COMPRA a partir do "dia de vencimento da
+// fatura" do cliente. Regra: a fatura fecha 5 dias antes do vencimento.
+// Compras feitas até o fechamento entram na fatura do mês atual; compras
+// feitas depois do fechamento entram na fatura do mês seguinte.
+export function computeSaleDueDate(dueDay, fromDate = new Date()) {
+  const day = parseInt(dueDay, 10) || 10;
+  const y = fromDate.getFullYear();
+  const m = fromDate.getMonth();
+  // new Date() normaliza dias negativos/estourados automaticamente,
+  // então "dia - 5" pode virar o mês anterior sem problema.
+  const closingDate = new Date(y, m, day - 5);
+  const todayStart = new Date(y, fromDate.getMonth(), fromDate.getDate());
+
+  let targetYear = y;
+  let targetMonth = m;
+  if (todayStart > closingDate) {
+    targetMonth = m + 1;
+  }
+  const dueDate = new Date(targetYear, targetMonth, clampDay(targetYear, targetMonth, day));
+  return dueDate.toISOString().slice(0, 10);
+}
+
+// Monta o texto da fatura (usado tanto para WhatsApp quanto como base do
+// que aparece na impressão).
+export function buildInvoiceText({ storeName, customer, sales, total }) {
+  const lines = [];
+  lines.push(`*Fatura — ${storeName || "Mercado"}*`);
+  lines.push(`Cliente: ${customer.name}`);
+  lines.push("");
+  lines.push("Compras:");
+  sales.forEach((s) => {
+    const desc = s.description ? ` (${s.description})` : "";
+    lines.push(`- ${fmtDate(s.date)}: ${brl(s.value)}${desc}`);
+  });
+  lines.push("");
+  lines.push(`*Total: ${brl(total)}*`);
+  const nextDue = sales.map((s) => s.dueDate).sort()[0];
+  if (nextDue) lines.push(`Vencimento: ${fmtDate(nextDue)}`);
+  return lines.join("\n");
+}
+
+export function whatsappLink(phoneDigits, text) {
+  const digits = onlyDigits(phoneDigits);
+  const withCountry = digits.startsWith("55") ? digits : `55${digits}`;
+  return `https://wa.me/${withCountry}?text=${encodeURIComponent(text)}`;
+}

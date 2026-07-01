@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Store, User, Lock, Plus, Search, LogOut, Receipt, AlertCircle,
-  ArrowLeft, ShoppingBag, Stamp, X, Phone, CreditCard, Mail, ShieldCheck,
+  ArrowLeft, ShoppingBag, X, Phone, CreditCard, Mail, ShieldCheck,
+  Camera, Printer, MessageCircle, Calendar, ChevronRight,
 } from "lucide-react";
 import {
   createUserWithEmailAndPassword,
@@ -13,33 +14,32 @@ import {
 import {
   doc, getDoc, setDoc, addDoc, updateDoc, collection, query, where, getDocs, serverTimestamp,
 } from "firebase/firestore";
-import { auth, db, secondaryAuth } from "./firebase";
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
+import { auth, db, secondaryAuth, storage } from "./firebase";
 import {
-  onlyDigits, formatCPF, formatPhone, isValidCPF, brl, fmtDate, todayISO, addDaysISO,
-  cpfToEmail, saleDisplayStatus,
+  onlyDigits, formatCPF, formatPhone, isValidCPF, brl, fmtDate, todayISO,
+  cpfToEmail, saleDisplayStatus, computeSaleDueDate, buildInvoiceText, whatsappLink,
 } from "./helpers";
 import PinPad from "./PinPad";
 
-function StampBadge({ kind }) {
+const DUE_DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
+
+function Badge({ kind }) {
   const map = {
-    CONFIRMADO: { color: "#2F5233", label: "CONFIRMADO" },
-    PAGO: { color: "#3F6B8A", label: "PAGO" },
-    VENCIDO: { color: "#A63D40", label: "VENCIDO" },
+    CONFIRMADO: "confirmado",
+    PAGO: "pago",
+    VENCIDO: "vencido",
   };
-  const s = map[kind] || map.CONFIRMADO;
-  return (
-    <span className="stamp" style={{ color: s.color, borderColor: s.color }}>
-      {s.label}
-    </span>
-  );
+  return <span className={"badge badge-" + (map[kind] || "confirmado")}>{kind}</span>;
 }
 
 export default function App() {
   const [screen, setScreen] = useState("loading"); // loading, adminSetup, adminLogin, admin
   const [toast, setToast] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [storeExists, setStoreExists] = useState(null);
   const [adminUid, setAdminUid] = useState(null);
+  const [storeConfig, setStoreConfig] = useState(null); // { storeName, email, logoUrl }
+  const logoInputRef = useRef(null);
 
   const showToast = (msg, err = false) => {
     setToast({ msg, err });
@@ -60,33 +60,42 @@ export default function App() {
   const [customerSearch, setCustomerSearch] = useState("");
   const [detailCustomerId, setDetailCustomerId] = useState(null);
   const [detailSales, setDetailSales] = useState(null);
+  const [showInvoice, setShowInvoice] = useState(false);
 
   // ---------- new customer modal ----------
   const [showNewCustomer, setShowNewCustomer] = useState(false);
   const [custStep, setCustStep] = useState("info"); // info, pin1, pin2
-  const [newCust, setNewCust] = useState({ name: "", cpf: "", phone: "" });
+  const [newCust, setNewCust] = useState({ name: "", cpf: "", phone: "", dueDay: 10, creditLimit: "" });
   const [firstPin, setFirstPin] = useState(null);
   const [custPinError, setCustPinError] = useState("");
   const [custPinResetKey, setCustPinResetKey] = useState(0);
 
   // ---------- new sale flow ----------
   const [saleStep, setSaleStep] = useState("form"); // form, pin
+  const [saleSearch, setSaleSearch] = useState("");
   const [saleCustomerId, setSaleCustomerId] = useState("");
   const [saleValue, setSaleValue] = useState("");
   const [saleDesc, setSaleDesc] = useState("");
-  const [saleDue, setSaleDue] = useState(addDaysISO(30));
   const [salePinError, setSalePinError] = useState("");
   const [salePinResetKey, setSalePinResetKey] = useState(0);
   const [salePinBusy, setSalePinBusy] = useState(false);
+  const [saleCustomerOwed, setSaleCustomerOwed] = useState(0);
+
+  // ---------- credit limit editing (detail page) ----------
+  const [editingLimit, setEditingLimit] = useState(false);
+  const [editLimitValue, setEditLimitValue] = useState("");
+
+  // ---------- cobranças search ----------
+  const [cobrancaSearch, setCobrancaSearch] = useState("");
 
   // ---------- bootstrap ----------
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       const storeSnap = await getDoc(doc(db, "config", "store"));
       const exists = storeSnap.exists();
-      setStoreExists(exists);
       const currentAdminUid = exists ? storeSnap.data().adminUid : null;
       setAdminUid(currentAdminUid);
+      if (exists) setStoreConfig(storeSnap.data());
 
       if (user && exists && user.uid === currentAdminUid) {
         await loadCustomersIndex(currentAdminUid);
@@ -94,7 +103,6 @@ export default function App() {
         return;
       }
       if (user) {
-        // Signed in but not the recognized admin — shouldn't normally happen.
         await signOut(auth);
       }
       setScreen(exists ? "adminLogin" : "adminSetup");
@@ -127,13 +135,15 @@ export default function App() {
     setBusy(true);
     try {
       const cred = await createUserWithEmailAndPassword(auth, setupEmail.trim(), setupPass);
-      await setDoc(doc(db, "config", "store"), {
+      const config = {
         adminUid: cred.user.uid,
         storeName: setupStoreName.trim(),
         email: setupEmail.trim(),
+        logoUrl: null,
         createdAt: Date.now(),
-      });
-      setStoreExists(true);
+      };
+      await setDoc(doc(db, "config", "store"), config);
+      setStoreConfig(config);
       setAdminUid(cred.user.uid);
       await loadCustomersIndex(cred.user.uid);
       showToast("Conta do mercado criada!");
@@ -175,9 +185,32 @@ export default function App() {
     setAdminTab("clientes");
   };
 
+  // ---------- LOGO UPLOAD ----------
+  const handleLogoClick = () => {
+    if (screen === "admin") logoInputRef.current?.click();
+  };
+  const handleLogoChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !adminUid) return;
+    if (!file.type.startsWith("image/")) return showToast("Selecione uma imagem", true);
+    setBusy(true);
+    try {
+      const ref_ = storageRef(storage, `logos/${adminUid}`);
+      await uploadBytes(ref_, file);
+      const url = await getDownloadURL(ref_);
+      await updateDoc(doc(db, "config", "store"), { logoUrl: url });
+      setStoreConfig((prev) => ({ ...prev, logoUrl: url }));
+      showToast("Logo atualizado!");
+    } catch (err) {
+      showToast("Erro ao enviar o logo", true);
+    }
+    setBusy(false);
+  };
+
   // ---------- NEW CUSTOMER (2-step PIN set) ----------
   const openNewCustomer = () => {
-    setNewCust({ name: "", cpf: "", phone: "" });
+    setNewCust({ name: "", cpf: "", phone: "", dueDay: 10, creditLimit: "" });
     setFirstPin(null);
     setCustPinError("");
     setCustStep("info");
@@ -209,7 +242,7 @@ export default function App() {
   };
 
   const createCustomer = async (pin) => {
-    const { name, phone } = newCust;
+    const { name, phone, dueDay, creditLimit } = newCust;
     const cpfDigits = onlyDigits(newCust.cpf);
     setBusy(true);
     try {
@@ -221,13 +254,17 @@ export default function App() {
         return;
       }
       const email = cpfToEmail(cpfDigits);
-      // Cria a conta de autenticação (guarda a senha do cliente com segurança)
-      // usando o app secundário, para não trocar a sessão do mercado.
       const cred = await createUserWithEmailAndPassword(secondaryAuth, email, pin);
       const uid = cred.user.uid;
       await signOut(secondaryAuth);
 
-      const custData = { name: name.trim(), cpf: cpfDigits, phone: onlyDigits(phone), email, adminUid, createdAt: Date.now() };
+      const limitVal = parseFloat((creditLimit || "").toString().replace(",", "."));
+      const custData = {
+        name: name.trim(), cpf: cpfDigits, phone: onlyDigits(phone),
+        dueDay: parseInt(dueDay, 10) || 10,
+        creditLimit: limitVal > 0 ? limitVal : null,
+        email, adminUid, createdAt: Date.now(),
+      };
       await setDoc(doc(db, "customers", uid), custData);
 
       setCustomersIndex((prev) => [...prev, { id: uid, ...custData }].sort((a, b) => a.name.localeCompare(b.name, "pt-BR")));
@@ -240,6 +277,42 @@ export default function App() {
   };
 
   // ---------- SALE + PIN CONFIRMATION ----------
+  const filteredForSale = customersIndex.filter((c) => {
+    const q = saleSearch.toLowerCase();
+    return q && (c.name.toLowerCase().includes(q) || c.cpf.includes(onlyDigits(saleSearch)));
+  }).slice(0, 8);
+
+  const pickSaleCustomer = (c) => {
+    setSaleCustomerId(c.id);
+    setSaleSearch(c.name);
+  };
+  const clearSaleCustomer = () => {
+    setSaleCustomerId("");
+    setSaleSearch("");
+  };
+
+  const saleCustomer = customersIndex.find((c) => c.id === saleCustomerId);
+  const saleVal = parseFloat((saleValue || "0").replace(",", ".")) || 0;
+  const saleDuePreview = saleCustomer ? computeSaleDueDate(saleCustomer.dueDay || 10) : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!saleCustomerId) {
+      setSaleCustomerOwed(0);
+      return;
+    }
+    (async () => {
+      const sales = await loadSalesFor(saleCustomerId);
+      const owed = sales.filter((s) => s.status === "confirmed").reduce((a, s) => a + s.value, 0);
+      if (!cancelled) setSaleCustomerOwed(owed);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saleCustomerId]);
+
+  const saleAvailable = saleCustomer && saleCustomer.creditLimit ? saleCustomer.creditLimit - saleCustomerOwed : null;
+  const saleExceedsLimit = saleAvailable !== null && saleVal > 0 && saleVal > saleAvailable;
+
   const goToSalePin = () => {
     if (!saleCustomerId) return showToast("Selecione um cliente", true);
     const val = parseFloat(saleValue.replace(",", "."));
@@ -263,12 +336,13 @@ export default function App() {
       await signOut(secondaryAuth);
 
       const val = parseFloat(saleValue.replace(",", "."));
+      const dueDate = computeSaleDueDate(customer.dueDay || 10);
       await addDoc(collection(db, "sales"), {
         customerUid: saleCustomerId,
         value: val,
         description: saleDesc.trim(),
         date: todayISO(),
-        dueDate: saleDue,
+        dueDate,
         status: "confirmed",
         confirmedAt: serverTimestamp(),
         createdBy: adminUid,
@@ -278,8 +352,7 @@ export default function App() {
       showToast(`Compra de ${brl(val)} confirmada e lançada para ${customer.name}.`);
       setSaleValue("");
       setSaleDesc("");
-      setSaleDue(addDaysISO(30));
-      setSaleCustomerId("");
+      clearSaleCustomer();
       setSaleStep("form");
     } catch (e) {
       setSalePinError("Senha incorreta. Peça para o cliente tentar novamente.");
@@ -292,6 +365,8 @@ export default function App() {
   const openDetail = async (custId) => {
     setDetailCustomerId(custId);
     setDetailSales(null);
+    setShowInvoice(false);
+    setEditingLimit(false);
     const sales = await loadSalesFor(custId);
     setDetailSales(sales.sort((a, b) => (a.date < b.date ? 1 : -1)));
   };
@@ -317,6 +392,31 @@ export default function App() {
     showToast("Fatura quitada!");
   };
 
+  const startEditLimit = () => {
+    setEditLimitValue(detailCustomer?.creditLimit ? String(detailCustomer.creditLimit).replace(".", ",") : "");
+    setEditingLimit(true);
+  };
+
+  const saveCreditLimit = async () => {
+    const val = parseFloat((editLimitValue || "").replace(",", "."));
+    const newLimit = val > 0 ? val : null;
+    setBusy(true);
+    await updateDoc(doc(db, "customers", detailCustomerId), { creditLimit: newLimit });
+    setCustomersIndex((prev) => prev.map((c) => (c.id === detailCustomerId ? { ...c, creditLimit: newLimit } : c)));
+    setEditingLimit(false);
+    setBusy(false);
+    showToast("Limite de crédito atualizado.");
+  };
+
+  const sendInvoiceWhatsapp = () => {
+    if (!detailCustomer || !openInvoiceSales.length) return;
+    if (!detailCustomer.phone) return showToast("Esse cliente não tem telefone cadastrado", true);
+    const text = buildInvoiceText({
+      storeName: storeConfig?.storeName, customer: detailCustomer, sales: openInvoiceSales, total: detailOwed,
+    });
+    window.open(whatsappLink(detailCustomer.phone, text), "_blank");
+  };
+
   // ---------- derived ----------
   const filteredCustomers = customersIndex.filter((c) => {
     const q = customerSearch.toLowerCase();
@@ -324,10 +424,8 @@ export default function App() {
   });
 
   const detailCustomer = detailCustomerId ? customersIndex.find((c) => c.id === detailCustomerId) : null;
-  const detailOwed = (detailSales || []).filter((s) => s.status === "confirmed").reduce((a, s) => a + s.value, 0);
-
-  const saleCustomer = customersIndex.find((c) => c.id === saleCustomerId);
-  const saleVal = parseFloat((saleValue || "0").replace(",", ".")) || 0;
+  const openInvoiceSales = (detailSales || []).filter((s) => s.status === "confirmed");
+  const detailOwed = openInvoiceSales.reduce((a, s) => a + s.value, 0);
 
   if (screen === "loading") {
     return <div className="wrap"><div className="shell"><div className="center-screen">Carregando...</div></div></div>;
@@ -336,23 +434,33 @@ export default function App() {
   return (
     <div className="wrap">
       <div className="shell">
+        <input ref={logoInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleLogoChange} />
+
         <div className="topbar">
           <div className="brand">
-            <Store size={22} />
+            <div className={"logo-box" + (screen === "admin" ? " clickable" : "")} onClick={handleLogoClick}>
+              {storeConfig?.logoUrl ? (
+                <img src={storeConfig.logoUrl} alt="Logo" className="logo-img" />
+              ) : screen === "admin" ? (
+                <Camera size={18} />
+              ) : (
+                <Store size={18} />
+              )}
+            </div>
             <div>
-              <div className="brand-title">Caderneta Digital</div>
+              <div className="brand-title">{storeConfig?.storeName || "Caderneta Digital"}</div>
               <div className="brand-sub">controle de fiado</div>
             </div>
           </div>
           {screen === "admin" && (
-            <button className="icon-btn" onClick={logout}><LogOut size={18} /></button>
+            <button className="icon-btn" onClick={logout}><LogOut size={17} /></button>
           )}
         </div>
 
         <div className="content">
           {screen === "adminSetup" && (
             <div className="center-screen">
-              <Lock size={28} color="#2F5233" />
+              <div className="icon-circle"><Lock size={22} /></div>
               <div className="ledger-title">Bem-vindo</div>
               <div className="ledger-tag">Crie a conta de acesso do mercado</div>
               <div style={{ width: "100%" }}>
@@ -371,7 +479,7 @@ export default function App() {
 
           {screen === "adminLogin" && (
             <div className="center-screen">
-              <Store size={28} color="#2F5233" />
+              <div className="icon-circle"><Store size={22} /></div>
               <div className="ledger-title">Entrar</div>
               <div className="ledger-tag">Digite seu e-mail e senha</div>
               <div style={{ width: "100%" }}>
@@ -393,7 +501,7 @@ export default function App() {
                 <>
                   <div className="section-title"><User size={16} /> Clientes</div>
                   <div className="search-row">
-                    <Search size={16} color="#8C8362" />
+                    <Search size={16} className="muted-icon" />
                     <input placeholder="Buscar por nome ou CPF" value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} />
                   </div>
                   <button className="btn btn-accent" style={{ marginBottom: 16 }} onClick={openNewCustomer}>
@@ -408,7 +516,7 @@ export default function App() {
                         <div className="cust-name">{c.name}</div>
                         <div className="cust-cpf">{formatCPF(c.cpf)}</div>
                       </div>
-                      <ArrowLeft size={16} style={{ transform: "rotate(180deg)", color: "#8C8362" }} />
+                      <ChevronRight size={17} className="muted-icon" />
                     </div>
                   ))}
                 </>
@@ -417,23 +525,60 @@ export default function App() {
               {adminTab === "venda" && saleStep === "form" && (
                 <>
                   <div className="section-title"><ShoppingBag size={16} /> Lançar venda no fiado</div>
+
                   <label className="field-label">Cliente</label>
-                  <select className="field" value={saleCustomerId} onChange={(e) => setSaleCustomerId(e.target.value)}>
-                    <option value="">Selecione o cliente...</option>
-                    {customersIndex.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name} — {formatCPF(c.cpf)}</option>
-                    ))}
-                  </select>
-                  <label className="field-label">Valor da compra</label>
+                  <div className="search-row" style={{ marginBottom: saleSearch ? 0 : 14 }}>
+                    <Search size={16} className="muted-icon" />
+                    <input
+                      placeholder="Buscar cliente por nome ou CPF"
+                      value={saleSearch}
+                      onChange={(e) => { setSaleSearch(e.target.value); setSaleCustomerId(""); }}
+                    />
+                    {saleCustomerId && (
+                      <button className="chip-clear" onClick={clearSaleCustomer}><X size={14} /></button>
+                    )}
+                  </div>
+                  {saleSearch && !saleCustomerId && (
+                    <div className="dropdown-list">
+                      {filteredForSale.map((c) => (
+                        <div className="dropdown-item" key={c.id} onClick={() => pickSaleCustomer(c)}>
+                          <div className="cust-name">{c.name}</div>
+                          <div className="cust-cpf">{formatCPF(c.cpf)}</div>
+                        </div>
+                      ))}
+                      {filteredForSale.length === 0 && <div className="dropdown-empty">Nenhum cliente encontrado</div>}
+                    </div>
+                  )}
+                  {saleCustomer && (
+                    <div className="selected-chip">
+                      <User size={13} /> {saleCustomer.name} — {formatCPF(saleCustomer.cpf)}
+                    </div>
+                  )}
+
+                  <label className="field-label" style={{ marginTop: 14 }}>Valor da compra</label>
                   <input className="field field-mono" placeholder="0,00" inputMode="decimal" value={saleValue} onChange={(e) => setSaleValue(e.target.value)} />
                   <label className="field-label">Descrição (opcional)</label>
                   <input className="field" placeholder="Ex: compras do mês" value={saleDesc} onChange={(e) => setSaleDesc(e.target.value)} />
-                  <label className="field-label">Vencimento</label>
-                  <input className="field" type="date" value={saleDue} onChange={(e) => setSaleDue(e.target.value)} />
-                  <button className="btn btn-primary" onClick={goToSalePin}>
-                    <Stamp size={17} /> Lançar venda
+
+                  {saleCustomer && (
+                    <div className="info-banner">
+                      <Calendar size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                      Vencimento desta compra: <strong>{fmtDate(saleDuePreview)}</strong> (fatura vence todo dia {saleCustomer.dueDay})
+                    </div>
+                  )}
+
+                  {saleCustomer && saleCustomer.creditLimit > 0 && (
+                    <div className={saleExceedsLimit ? "warn-banner" : "info-banner"}>
+                      <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                      Limite de crédito: <strong>{brl(saleCustomer.creditLimit)}</strong> · Disponível: <strong>{brl(saleAvailable)}</strong>
+                      {saleExceedsLimit && <> — esta compra ultrapassa o limite do cliente.</>}
+                    </div>
+                  )}
+
+                  <button className="btn btn-primary" onClick={goToSalePin} style={{ marginTop: 6 }}>
+                    Lançar venda
                   </button>
-                  <div className="warn-banner" style={{ marginTop: 14 }}>
+                  <div className="warn-banner" style={{ marginTop: 12 }}>
                     <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
                     Em seguida, entregue o aparelho para o cliente digitar a senha dele e confirmar.
                   </div>
@@ -442,7 +587,7 @@ export default function App() {
 
               {adminTab === "venda" && saleStep === "pin" && (
                 <div className="center-screen" style={{ paddingTop: 10 }}>
-                  <ShieldCheck size={26} color="#2F5233" />
+                  <div className="icon-circle"><ShieldCheck size={22} /></div>
                   <div className="pin-customer-name">{saleCustomer?.name}</div>
                   <div className="pin-customer-value">{brl(saleVal)}</div>
                   <div className="pin-hint">Entregue o aparelho para o cliente digitar a senha e confirmar a compra</div>
@@ -453,7 +598,14 @@ export default function App() {
               )}
 
               {adminTab === "cobrancas" && (
-                <CobrancasTab customersIndex={customersIndex} openDetail={openDetail} loadSalesFor={loadSalesFor} />
+                <>
+                  <div className="section-title"><Receipt size={16} /> Cobranças</div>
+                  <div className="search-row">
+                    <Search size={16} className="muted-icon" />
+                    <input placeholder="Buscar por nome ou CPF" value={cobrancaSearch} onChange={(e) => setCobrancaSearch(e.target.value)} />
+                  </div>
+                  <CobrancasTab customersIndex={customersIndex} openDetail={openDetail} loadSalesFor={loadSalesFor} search={cobrancaSearch} />
+                </>
               )}
             </>
           )}
@@ -475,6 +627,30 @@ export default function App() {
                     {formatPhone(detailCustomer.phone)}
                   </div>
                 )}
+                <div className="cust-cpf" style={{ marginTop: 3 }}>
+                  <Calendar size={12} style={{ display: "inline", marginRight: 4 }} />
+                  Fatura vence todo dia {detailCustomer.dueDay || 10}
+                </div>
+
+                {!editingLimit ? (
+                  <div className="row-between" style={{ marginTop: 8 }}>
+                    <div className="cust-cpf">
+                      <CreditCard size={12} style={{ display: "inline", marginRight: 4 }} />
+                      Limite de crédito: {detailCustomer.creditLimit ? brl(detailCustomer.creditLimit) : "sem limite definido"}
+                    </div>
+                    <button className="link-btn" style={{ padding: "2px 6px" }} onClick={startEditLimit}>editar</button>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 10 }}>
+                    <label className="field-label">Novo limite de crédito (0 = sem limite)</label>
+                    <input className="field field-mono" style={{ marginBottom: 8 }} inputMode="decimal" placeholder="0,00"
+                      value={editLimitValue} onChange={(e) => setEditLimitValue(e.target.value)} autoFocus />
+                    <div className="action-row" style={{ marginTop: 0 }}>
+                      <button className="btn btn-primary btn-sm" onClick={saveCreditLimit} disabled={busy}>Salvar</button>
+                      <button className="btn btn-outline btn-sm" onClick={() => setEditingLimit(false)} disabled={busy}>Cancelar</button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="card">
@@ -482,11 +658,26 @@ export default function App() {
                   <div>
                     <div className="field-label" style={{ marginBottom: 2 }}>Saldo devedor</div>
                     <div className={"owed-amt " + (detailOwed > 0 ? "pos" : "zero")} style={{ fontSize: 20 }}>{brl(detailOwed)}</div>
+                    {detailCustomer.creditLimit > 0 && (
+                      <div className="cust-cpf" style={{ marginTop: 4 }}>
+                        Disponível: {brl(detailCustomer.creditLimit - detailOwed)} de {brl(detailCustomer.creditLimit)}
+                      </div>
+                    )}
                   </div>
                   {detailOwed > 0 && (
                     <button className="btn btn-primary btn-sm" onClick={markAllPaid} disabled={busy}>Marcar tudo pago</button>
                   )}
                 </div>
+                {detailOwed > 0 && (
+                  <div className="action-row">
+                    <button className="btn btn-outline btn-sm" onClick={() => setShowInvoice(true)}>
+                      <Printer size={14} /> Imprimir fatura
+                    </button>
+                    <button className="btn btn-outline btn-sm" onClick={sendInvoiceWhatsapp}>
+                      <MessageCircle size={14} /> WhatsApp
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="section-title" style={{ marginTop: 4 }}><Receipt size={16} /> Histórico</div>
@@ -507,7 +698,7 @@ export default function App() {
                             <span>Vence: {fmtDate(s.dueDate)}</span>
                           </div>
                         </div>
-                        <StampBadge kind={saleDisplayStatus(s)} />
+                        <Badge kind={saleDisplayStatus(s)} />
                       </div>
                       {s.status === "confirmed" && (
                         <button className="btn btn-outline btn-sm" style={{ marginTop: 10 }} onClick={() => markSalePaid(s.id)} disabled={busy}>
@@ -546,16 +737,23 @@ export default function App() {
                 <>
                   <div className="row-between" style={{ marginBottom: 14 }}>
                     <div className="section-title" style={{ margin: 0 }}>Novo cliente</div>
-                    <button className="icon-btn" style={{ borderColor: "#B9AE8F", color: "#23301F" }} onClick={() => setShowNewCustomer(false)}><X size={16} /></button>
+                    <button className="icon-btn icon-btn-light" onClick={() => setShowNewCustomer(false)}><X size={16} /></button>
                   </div>
                   <label className="field-label">Nome completo</label>
                   <input className="field" value={newCust.name} onChange={(e) => setNewCust({ ...newCust, name: e.target.value })} />
                   <label className="field-label">CPF</label>
                   <input className="field field-mono" placeholder="000.000.000-00" value={formatCPF(newCust.cpf)}
                     onChange={(e) => setNewCust({ ...newCust, cpf: e.target.value })} inputMode="numeric" />
-                  <label className="field-label">Telefone</label>
+                  <label className="field-label">Telefone (para envio da fatura por WhatsApp)</label>
                   <input className="field field-mono" placeholder="(00) 00000-0000" value={formatPhone(newCust.phone)}
                     onChange={(e) => setNewCust({ ...newCust, phone: e.target.value })} inputMode="numeric" />
+                  <label className="field-label">Dia de vencimento da fatura</label>
+                  <select className="field" value={newCust.dueDay} onChange={(e) => setNewCust({ ...newCust, dueDay: e.target.value })}>
+                    {DUE_DAYS.map((d) => <option key={d} value={d}>Todo dia {d}</option>)}
+                  </select>
+                  <label className="field-label">Limite de crédito (opcional)</label>
+                  <input className="field field-mono" placeholder="0,00 = sem limite" inputMode="decimal"
+                    value={newCust.creditLimit} onChange={(e) => setNewCust({ ...newCust, creditLimit: e.target.value })} />
                   <button className="btn btn-primary" onClick={goToSetPin}>Continuar</button>
                 </>
               )}
@@ -582,13 +780,64 @@ export default function App() {
           </div>
         )}
 
+        {/* INVOICE / PRINT OVERLAY */}
+        {showInvoice && detailCustomer && (
+          <div className="modal-overlay">
+            <div className="modal invoice-modal">
+              <div className="no-print row-between" style={{ marginBottom: 14 }}>
+                <div className="section-title" style={{ margin: 0 }}>Fatura</div>
+                <button className="icon-btn icon-btn-light" onClick={() => setShowInvoice(false)}><X size={16} /></button>
+              </div>
+
+              <div className="invoice-print-root">
+                <div className="invoice-header">
+                  {storeConfig?.logoUrl && <img src={storeConfig.logoUrl} alt="Logo" className="invoice-logo" />}
+                  <div>
+                    <div className="invoice-store">{storeConfig?.storeName || "Mercado"}</div>
+                    <div className="invoice-sub">Fatura de fiado</div>
+                  </div>
+                </div>
+                <div className="invoice-customer">
+                  <div><strong>{detailCustomer.name}</strong></div>
+                  <div>{formatCPF(detailCustomer.cpf)}</div>
+                </div>
+                <table className="invoice-table">
+                  <thead>
+                    <tr><th>Data</th><th>Descrição</th><th style={{ textAlign: "right" }}>Valor</th></tr>
+                  </thead>
+                  <tbody>
+                    {openInvoiceSales.map((s) => (
+                      <tr key={s.id}>
+                        <td>{fmtDate(s.date)}</td>
+                        <td>{s.description || "-"}</td>
+                        <td style={{ textAlign: "right" }}>{brl(s.value)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="invoice-total-row">
+                  <span>Total</span>
+                  <span>{brl(detailOwed)}</span>
+                </div>
+                {openInvoiceSales[0] && (
+                  <div className="invoice-due">Vencimento: {fmtDate(openInvoiceSales.map((s) => s.dueDate).sort()[0])}</div>
+                )}
+              </div>
+
+              <button className="btn btn-primary no-print" style={{ marginTop: 18 }} onClick={() => window.print()}>
+                <Printer size={16} /> Imprimir
+              </button>
+            </div>
+          </div>
+        )}
+
         {toast && <div className={"toast" + (toast.err ? " err" : "")}>{toast.msg}</div>}
       </div>
     </div>
   );
 }
 
-function CobrancasTab({ customersIndex, openDetail, loadSalesFor }) {
+function CobrancasTab({ customersIndex, openDetail, loadSalesFor, search }) {
   const [totals, setTotals] = useState(null);
 
   useEffect(() => {
@@ -610,20 +859,16 @@ function CobrancasTab({ customersIndex, openDetail, loadSalesFor }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customersIndex]);
 
-  const grandTotal = totals ? totals.reduce((a, c) => a + c.owed, 0) : 0;
+  const q = (search || "").toLowerCase();
+  const visible = (totals || []).filter((c) => c.owed > 0 && (!q || c.name.toLowerCase().includes(q) || c.cpf.includes(onlyDigits(search))));
 
   return (
     <>
-      <div className="section-title"><Receipt size={16} /> Cobranças</div>
-      <div className="card total-box" style={{ marginBottom: 18 }}>
-        <div className="total-label">Total a receber</div>
-        <div className="total-value">{brl(grandTotal)}</div>
-      </div>
       {totals === null && <div className="empty">Carregando...</div>}
-      {totals && totals.filter((c) => c.owed > 0).length === 0 && (
+      {totals && visible.length === 0 && (
         <div className="empty"><Receipt size={30} /><div>Nenhuma cobrança em aberto.</div></div>
       )}
-      {totals && totals.filter((c) => c.owed > 0).map((c) => (
+      {visible.map((c) => (
         <div className="cust-row" key={c.id} onClick={() => openDetail(c.id)}>
           <div>
             <div className="cust-name">{c.name}</div>
@@ -631,7 +876,7 @@ function CobrancasTab({ customersIndex, openDetail, loadSalesFor }) {
           </div>
           <div style={{ textAlign: "right" }}>
             <div className="owed-amt pos">{brl(c.owed)}</div>
-            {c.overdue && <StampBadge kind="VENCIDO" />}
+            {c.overdue && <Badge kind="VENCIDO" />}
           </div>
         </div>
       ))}

@@ -1,20 +1,39 @@
 # Caderneta Digital — Controle de Fiado
 
-App para controlar vendas fiado do mercado. Só você (o mercado) usa login
+App para controlar vendas fiado do mercado. Só você (o mercado) faz login
 nesse app: cadastra o cliente com uma senha numérica (PIN de 6 dígitos) e,
 na hora de lançar a venda, entrega o aparelho para o cliente digitar a
 senha dele num teclado numérico na tela — como um pinpad de maquininha —
 para confirmar e reconhecer a compra. Funciona em qualquer navegador
 (celular, tablet, computador) e sincroniza entre todos os dispositivos.
 
+## Funcionalidades
+
+- Cadastro de clientes com nome, CPF, telefone, dia de vencimento da
+  fatura, limite de crédito (opcional) e senha pessoal (PIN de 6 dígitos).
+- Lançamento de venda com busca de cliente por nome ou CPF. Se a compra
+  ultrapassar o limite de crédito do cliente, aparece um aviso — mas você
+  ainda pode decidir lançar mesmo assim.
+- Limite de crédito editável a qualquer momento na ficha do cliente,
+  onde também aparece quanto ainda está disponível.
+- O vencimento de cada compra é calculado automaticamente: a fatura fecha
+  5 dias antes do vencimento escolhido para o cliente — compras feitas
+  antes do fechamento entram na fatura do mês atual, depois entram na do
+  mês seguinte.
+- Confirmação da compra pelo próprio cliente, no pinpad, na hora.
+- Aba de Cobranças com busca, mostrando só quem tem saldo em aberto.
+- Fatura imprimível (com todas as compras discriminadas) e envio da
+  fatura por WhatsApp para o telefone cadastrado do cliente.
+- Espaço para logo do mercado no topo do app (clique no quadrado ao lado
+  do nome do mercado para enviar uma imagem).
+
 ## Segurança
 
-- A senha de acesso do mercado e a senha (PIN) de cada cliente são geridas
-  pelo **Firebase Authentication** — nunca ficam salvas em texto puro em
-  lugar nenhum, nem eu tenho acesso a elas.
+- A senha de acesso do mercado e o PIN de cada cliente são geridos pelo
+  **Firebase Authentication** — nunca ficam salvos em texto puro em
+  lugar nenhum, nem eu tenho acesso a eles.
 - A confirmação da venda só acontece se o PIN digitado bater com o PIN
-  real do cliente (verificado contra o Firebase, não por comparação de
-  texto simples).
+  real do cliente (verificado contra o Firebase).
 - As **Regras de Segurança do Firestore** (`firestore.rules`) garantem que
   só a conta do mercado consegue ler ou alterar clientes e vendas.
 
@@ -23,68 +42,54 @@ para confirmar e reconhecer a compra. Funciona em qualquer navegador
 ### 1. Criar o projeto no Firebase
 
 1. Acesse https://console.firebase.google.com e crie um novo projeto.
-2. No menu lateral, vá em **Build > Authentication** → aba **Sign-in method**
-   → ative o provedor **E-mail/senha**.
-3. Vá em **Build > Firestore Database** → **Criar banco de dados** → escolha
-   modo de produção e a região mais próxima (ex: `southamerica-east1`).
-4. Ainda no Firestore, abra a aba **Regras** e cole o conteúdo do arquivo
-   `firestore.rules` deste projeto, substituindo o que já está lá. Clique em
-   **Publicar**.
-5. Vá em **Configurações do projeto** (ícone de engrenagem) → role até
-   **Seus aplicativos** → clique no ícone `</>` para criar um app da Web.
-   Dê um nome qualquer e clique em registrar. O Firebase vai mostrar um bloco
-   `firebaseConfig` — você vai precisar desses valores no próximo passo.
+2. **Build > Authentication** → aba **Sign-in method** → ative
+   **E-mail/senha**.
+3. **Build > Firestore Database** → **Criar banco de dados** → modo de
+   produção, região `southamerica-east1`.
+4. Na aba **Regras** do Firestore, apague o conteúdo e cole o do arquivo
+   `firestore.rules` deste projeto → **Publicar**.
+5. **Build > Storage** → **Começar** → siga o assistente (modo produção,
+   mesma região). Isso é usado só para guardar a imagem do logo do
+   mercado. Na aba **Regras** do Storage, cole o conteúdo do arquivo
+   `storage.rules` deste projeto → **Publicar**.
+6. **Configurações do projeto** (ícone de engrenagem) → **Seus
+   aplicativos** → ícone `</>` para criar um app Web → dê um nome →
+   Registrar. Vai aparecer um bloco `firebaseConfig` — você vai usar
+   esses valores no passo do Vercel.
 
-### 2. Configurar o projeto localmente
+### 2. Subir para o GitHub
 
-1. Copie o arquivo `.env.example` para `.env`.
-2. Preencha o `.env` com os valores do `firebaseConfig` que o Firebase
-   mostrou (apiKey, authDomain, projectId, etc.).
+1. Crie um repositório novo (pode ser privado) em https://github.com
+2. Envie todos os arquivos e pastas de dentro desta pasta para o
+   repositório (pelo site, em "uploading an existing file", ou por
+   `git push` se preferir usar terminal).
+   > O arquivo `.env` não deve subir — ele já está no `.gitignore`.
 
-### 3. Subir para o GitHub
+### 3. Publicar no Vercel
 
-1. Crie um repositório novo no GitHub (pode ser privado).
-2. Envie esta pasta para o repositório:
-   ```
-   git init
-   git add .
-   git commit -m "Caderneta Digital - controle de fiado"
-   git branch -M main
-   git remote add origin https://github.com/SEU_USUARIO/SEU_REPOSITORIO.git
-   git push -u origin main
-   ```
-   > O arquivo `.env` não vai junto (está no `.gitignore`), que é o certo —
-   > ele contém a configuração do seu Firebase.
-
-### 4. Publicar no Vercel
-
-1. Acesse https://vercel.com, clique em **Add New > Project** e importe o
-   repositório do GitHub que você acabou de criar.
-2. O Vercel detecta automaticamente que é um projeto Vite — pode deixar as
-   configurações padrão de build.
-3. Antes de clicar em **Deploy**, abra **Environment Variables** e adicione
-   cada uma das variáveis do seu `.env`:
+1. https://vercel.com → **Add New > Project** → importe o repositório.
+2. Antes de clicar em Deploy, em **Environment Variables**, adicione:
    - `VITE_FIREBASE_API_KEY`
    - `VITE_FIREBASE_AUTH_DOMAIN`
    - `VITE_FIREBASE_PROJECT_ID`
    - `VITE_FIREBASE_STORAGE_BUCKET`
    - `VITE_FIREBASE_MESSAGING_SENDER_ID`
    - `VITE_FIREBASE_APP_ID`
-4. Clique em **Deploy**. Em cerca de um minuto o app estará no ar, com um
-   link tipo `seu-projeto.vercel.app`.
+   (os valores vêm do `firebaseConfig` do passo 1.6)
+3. Clique em **Deploy**.
 
-### 5. Primeiro acesso
+### 4. Primeiro acesso
 
-1. Abra o link publicado. Como é a primeira vez, o app vai pedir para você
-   criar a conta do mercado (nome do mercado, seu e-mail e uma senha). Esse
-   e-mail também serve para recuperar a senha caso esqueça.
-2. Cadastre um cliente: nome, CPF, telefone e uma senha de 6 dígitos (o
-   próprio cliente pode digitar essa senha na hora do cadastro).
-3. Para lançar uma venda: aba "Nova venda" → escolha o cliente → valor →
-   vencimento → "Lançar venda" → entregue o aparelho para o cliente digitar
-   a senha e confirmar.
+1. Abra o link publicado → crie a conta do mercado (nome, e-mail, senha).
+2. Clique no quadrado de logo no topo para enviar a imagem do mercado
+   (opcional).
+3. Cadastre um cliente: nome, CPF, telefone, dia de vencimento da fatura
+   e senha de 6 dígitos.
+4. Lance uma venda de teste na aba "Nova venda" e confirme com o pinpad.
+5. Na ficha do cliente (Clientes ou Cobranças → toque no cliente), use
+   "Imprimir fatura" ou "WhatsApp" para gerar a cobrança.
 
-## Rodar localmente (opcional, para testar antes de publicar)
+## Rodar localmente (opcional)
 
 ```
 npm install
