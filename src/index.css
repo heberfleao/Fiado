@@ -1,0 +1,130 @@
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: 'Libre Franklin', sans-serif;
+}
+
+.wrap {
+  min-height: 100vh;
+  background: #F6F1E4;
+  background-image: linear-gradient(#E4DCC6 1px, transparent 1px);
+  background-size: 100% 42px;
+  color: #23301F;
+  display: flex;
+  justify-content: center;
+  padding: 0;
+}
+.shell { width: 100%; max-width: 480px; min-height: 100vh; background: transparent; display:flex; flex-direction:column; position:relative; }
+.topbar {
+  background: #23301F;
+  color: #F6F1E4;
+  padding: 18px 20px 16px;
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 4px double #C77B2E;
+}
+.brand { display:flex; align-items:center; gap:10px; }
+.brand-title { font-family: 'Special Elite', monospace; font-size: 19px; letter-spacing: 0.5px; }
+.brand-sub { font-size: 11px; opacity: 0.75; letter-spacing: 1px; text-transform: uppercase; }
+.icon-btn { background: transparent; border: 1px solid rgba(246,241,228,0.4); color:#F6F1E4; padding:8px; border-radius:6px; display:flex; align-items:center; cursor:pointer; }
+.icon-btn:active { background: rgba(246,241,228,0.15); }
+.content { flex:1; padding: 20px 18px 90px; }
+
+.center-screen { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding: 32px 24px; text-align:center; gap: 10px; }
+.ledger-title { font-family:'Special Elite', monospace; font-size: 28px; color:#23301F; margin: 6px 0 2px; }
+.ledger-tag { font-size: 13px; color:#6B6252; margin-bottom: 26px; letter-spacing:0.3px;}
+
+.role-card {
+  width: 100%; background: #FFFDF7; border: 1.5px solid #23301F;
+  border-radius: 4px; padding: 20px; margin-bottom: 14px;
+  display:flex; align-items:center; gap:14px; cursor:pointer; text-align:left;
+  box-shadow: 3px 3px 0 #C9BE9E;
+  transition: transform .1s ease;
+}
+.role-card:active { transform: translate(2px,2px); box-shadow: 1px 1px 0 #C9BE9E; }
+.role-icon { background:#2F5233; color:#F6F1E4; padding:12px; border-radius:50%; flex-shrink:0; }
+.role-title { font-weight:700; font-size:16px; }
+.role-sub { font-size:12.5px; color:#6B6252; margin-top:2px; }
+
+.field-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color:#6B6252; margin-bottom:5px; font-weight:600; display:block;}
+.field { width:100%; padding: 12px 13px; border: 1.5px solid #B9AE8F; border-radius: 5px; font-size: 15px; background:#FFFDF7; color:#23301F; margin-bottom:14px; font-family:'Libre Franklin',sans-serif;}
+.field:focus { outline:none; border-color:#2F5233; }
+.field-mono { font-family:'IBM Plex Mono', monospace; }
+
+.btn { width:100%; padding: 13px; border-radius:5px; border:none; font-weight:700; font-size:15px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; }
+.btn-primary { background:#2F5233; color:#F6F1E4; }
+.btn-primary:active { background:#24401F; }
+.btn-accent { background:#C77B2E; color:#fff; }
+.btn-outline { background:transparent; border: 1.5px solid #23301F; color:#23301F; }
+.btn-danger { background:#A63D40; color:#fff; }
+.btn-sm { padding:8px 12px; font-size:13px; width:auto; }
+.link-btn { background:none; border:none; color:#2F5233; font-weight:600; font-size:13.5px; cursor:pointer; text-decoration:underline; padding:6px; }
+.btn:disabled { opacity: 0.6; cursor: default; }
+
+.tabs { display:flex; position:fixed; bottom:0; left:0; right:0; background:#23301F; max-width:480px; margin:0 auto; border-top:2px solid #C77B2E; }
+.tabs-inner { display:flex; width:100%; max-width:480px; margin:0 auto; }
+.tab-btn { flex:1; background:none; border:none; color:#B9AE8F; padding: 12px 4px 10px; display:flex; flex-direction:column; align-items:center; gap:3px; font-size:11px; cursor:pointer; }
+.tab-btn.active { color:#F6F1E4; }
+.tab-btn.active svg { color:#C77B2E; }
+
+.section-title { font-family:'Special Elite', monospace; font-size:16px; margin: 4px 0 14px; display:flex; align-items:center; gap:8px; }
+
+.search-row { display:flex; align-items:center; gap:8px; background:#FFFDF7; border:1.5px solid #B9AE8F; border-radius:5px; padding: 9px 12px; margin-bottom:14px; }
+.search-row input { border:none; outline:none; flex:1; background:transparent; font-size:14.5px; }
+
+.cust-row { display:flex; align-items:center; justify-content:space-between; background:#FFFDF7; border:1px solid #DAD1B4; border-radius:5px; padding: 12px 14px; margin-bottom:9px; cursor:pointer; }
+.cust-row:active { background:#F1EADA; }
+.cust-name { font-weight:700; font-size:14.5px; }
+.cust-cpf { font-size:12px; color:#6B6252; font-family:'IBM Plex Mono',monospace; margin-top:2px; }
+.owed-amt { font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:14px; }
+.owed-amt.zero { color: #8C8362; }
+.owed-amt.pos { color:#A63D40; }
+
+.stamp {
+  display:inline-block; font-family:'Special Elite', monospace; font-size:10.5px;
+  border: 2px solid; border-radius: 4px; padding: 2px 7px;
+  transform: rotate(-4deg); letter-spacing: 1px; font-weight:700;
+  background: rgba(255,255,255,0.5);
+}
+
+.card { background:#FFFDF7; border:1px solid #DAD1B4; border-radius:6px; padding:16px; margin-bottom:14px; }
+.row-between { display:flex; align-items:center; justify-content:space-between; }
+
+.sale-item { border-bottom: 1px dashed #DAD1B4; padding: 12px 0; }
+.sale-item:last-child { border-bottom:none; }
+.sale-top { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+.sale-val { font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:15px; }
+.sale-desc { font-size:13px; color:#4A4536; margin-top:2px; }
+.sale-meta { font-size:11.5px; color:#8C8362; margin-top:5px; display:flex; gap:12px; flex-wrap:wrap; }
+
+.total-box { text-align:center; padding: 18px 10px; }
+.total-label { font-size:12px; text-transform:uppercase; letter-spacing:1px; color:#6B6252; }
+.total-value { font-family:'IBM Plex Mono',monospace; font-size:32px; font-weight:700; color:#A63D40; margin-top:4px; }
+.total-value.ok { color:#2F5233; }
+
+.toast { position:fixed; bottom: 76px; left:50%; transform:translateX(-50%); background:#23301F; color:#F6F1E4; padding:11px 18px; border-radius:6px; font-size:13.5px; z-index:50; max-width:90%; text-align:center; box-shadow:0 4px 14px rgba(0,0,0,0.25); }
+.toast.err { background:#A63D40; }
+
+.modal-overlay { position:fixed; inset:0; background:rgba(35,48,31,0.55); display:flex; align-items:center; justify-content:center; padding:20px; z-index:60; }
+.modal { background:#FFFDF7; border-radius:8px; padding:22px; width:100%; max-width:380px; border:1.5px solid #23301F; max-height: 90vh; overflow-y: auto; }
+
+.back-row { display:flex; align-items:center; gap:8px; margin-bottom:14px; cursor:pointer; color:#2F5233; font-weight:600; font-size:14px;}
+
+.empty { text-align:center; padding: 40px 16px; color:#8C8362; }
+.empty svg { margin-bottom:10px; opacity:0.5; }
+
+.warn-banner { background:#F5D9B0; border:1px solid #C77B2E; color:#6B4519; padding:10px 12px; border-radius:5px; font-size:12.5px; margin-bottom:14px; display:flex; gap:8px; align-items:flex-start; }
+
+.pinpad-dots { display:flex; gap:14px; justify-content:center; margin: 22px 0 30px; }
+.pinpad-dot { width:14px; height:14px; border-radius:50%; border:2px solid #23301F; background: transparent; transition: background .1s ease; }
+.pinpad-dot.filled { background:#23301F; }
+.pinpad-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:14px; max-width: 260px; margin: 0 auto; }
+.pinpad-key { aspect-ratio: 1/1; border-radius:50%; border:1.5px solid #B9AE8F; background:#FFFDF7; font-size:22px; font-weight:700; font-family:'IBM Plex Mono',monospace; display:flex; align-items:center; justify-content:center; cursor:pointer; color:#23301F; }
+.pinpad-key:active { background:#F1EADA; }
+.pinpad-key.empty { visibility:hidden; border:none; }
+.pinpad-key.action { border:none; background:transparent; color:#8C8362; font-size:18px; }
+.pinpad-key:disabled { opacity:0.5; }
+
+.pin-customer-name { font-family:'Special Elite', monospace; font-size:19px; text-align:center; margin-bottom: 2px; }
+.pin-customer-value { text-align:center; font-family:'IBM Plex Mono',monospace; font-size:26px; font-weight:700; color:#A63D40; margin-bottom: 6px; }
+.pin-hint { text-align:center; font-size:13px; color:#6B6252; margin-bottom: 4px; }
+.pin-error { text-align:center; font-size:13px; color:#A63D40; font-weight:600; margin: 10px 0 0; min-height: 18px; }

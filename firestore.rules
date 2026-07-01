@@ -1,0 +1,39 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/config/store)
+        && get(/databases/$(database)/documents/config/store).data.adminUid == request.auth.uid;
+    }
+
+    // Documento único com a configuração do mercado (quem é o admin).
+    match /config/store {
+      allow read: if true;
+      // Só pode ser criado uma vez, e só por quem está criando a própria conta.
+      allow create: if isSignedIn()
+        && !exists(/databases/$(database)/documents/config/store)
+        && request.resource.data.adminUid == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // Cadastro dos clientes. Só o dono do mercado acessa — não existe login
+    // de cliente nesse app; a "senha" do cliente só é usada para confirmar
+    // uma venda na hora (via pinpad), nunca para abrir sessão própria.
+    match /customers/{uid} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    // Vendas fiado.
+    match /sales/{saleId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+  }
+}
