@@ -115,7 +115,10 @@ body { font-family: 'Inter', -apple-system, sans-serif; }
 
 .cust-row { display:flex; align-items:center; justify-content:space-between; background: var(--surface); border:1px solid var(--border); border-radius:10px; padding: 13px 15px; margin-bottom:9px; cursor:pointer; }
 .cust-row:active { background: #F7F9FA; }
+.cust-row-overdue { border-color: var(--danger); background: var(--danger-bg); }
+.cust-row-overdue:active { background: #FBDFDC; }
 .cust-name { font-weight:700; font-size:14.5px; letter-spacing: -0.1px; }
+.text-danger { color: var(--danger) !important; }
 .cust-cpf { font-size:12px; color: var(--muted); font-family:'IBM Plex Mono',monospace; margin-top:3px; }
 .owed-amt { font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:14.5px; }
 .owed-amt.zero { color: var(--muted); }

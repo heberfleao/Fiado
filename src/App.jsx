@@ -660,6 +660,22 @@ export default function App() {
     return !q || c.name.toLowerCase().includes(q) || c.cpf.includes(onlyDigits(customerSearch));
   });
 
+  const [overdueCustomerIds, setOverdueCustomerIds] = useState(new Set());
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const overdueSet = new Set();
+      for (const c of customersIndex) {
+        const sales = await loadSalesFor(c.id);
+        const hasOverdue = sales.some((s) => s.status === "confirmed" && s.dueDate < todayISO());
+        if (hasOverdue) overdueSet.add(c.id);
+      }
+      if (!cancelled) setOverdueCustomerIds(overdueSet);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customersIndex]);
+
   const detailCustomer = detailCustomerId ? customersIndex.find((c) => c.id === detailCustomerId) : null;
   const openInvoiceSales = (detailSales || []).filter((s) => s.status === "confirmed");
   const detailOwed = openInvoiceSales.reduce((a, s) => a + s.value, 0);
@@ -747,15 +763,18 @@ export default function App() {
                   {filteredCustomers.length === 0 && (
                     <div className="empty"><User size={30} /><div>Nenhum cliente cadastrado ainda.</div></div>
                   )}
-                  {filteredCustomers.map((c) => (
-                    <div className="cust-row" key={c.id} onClick={() => openDetail(c.id)}>
-                      <div>
-                        <div className="cust-name">{c.name}</div>
-                        <div className="cust-cpf">{formatCPF(c.cpf)}</div>
+                  {filteredCustomers.map((c) => {
+                    const overdue = overdueCustomerIds.has(c.id);
+                    return (
+                      <div className={"cust-row" + (overdue ? " cust-row-overdue" : "")} key={c.id} onClick={() => openDetail(c.id)}>
+                        <div>
+                          <div className={"cust-name" + (overdue ? " text-danger" : "")}>{c.name}</div>
+                          <div className="cust-cpf">{formatCPF(c.cpf)}</div>
+                        </div>
+                        {overdue ? <Badge kind="VENCIDO" /> : <ChevronRight size={17} className="muted-icon" />}
                       </div>
-                      <ChevronRight size={17} className="muted-icon" />
-                    </div>
-                  ))}
+                    );
+                  })}
                 </>
               )}
 

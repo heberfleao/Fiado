@@ -32,6 +32,8 @@ para confirmar e reconhecer a compra. Funciona em qualquer navegador
 - Redefinição da senha do cliente caso ele esqueça — pode ser feita pela
   ficha do cliente ou direto na hora da confirmação da compra, caso ele
   não lembre a senha no pinpad.
+- Clientes com fatura atrasada aparecem destacados em vermelho na aba
+  Clientes, com um selo "VENCIDO".
 - Aba de Relatórios com duas visões: tudo o que está a receber (todos os
   clientes com saldo em aberto) e todos os pagamentos já recebidos, com
   totais e opção de imprimir.
