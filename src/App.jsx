@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Store, User, Lock, Plus, Search, LogOut, Receipt, AlertCircle,
   ArrowLeft, ShoppingBag, X, Phone, CreditCard, Mail, ShieldCheck,
-  Camera, Printer, MessageCircle, Calendar, ChevronRight,
+  Camera, Printer, MessageCircle, Calendar, ChevronRight, FileText,
 } from "lucide-react";
 import {
   createUserWithEmailAndPassword,
@@ -18,7 +18,8 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage
 import { auth, db, secondaryAuth, storage } from "./firebase";
 import {
   onlyDigits, formatCPF, formatPhone, isValidCPF, brl, fmtDate, todayISO,
-  cpfToEmail, saleDisplayStatus, computeSaleDueDate, buildInvoiceText, whatsappLink,
+  cpfToEmail, cpfToResetEmail, saleDisplayStatus, computeSaleDueDate, buildInvoiceText, whatsappLink,
+  buildAcknowledgmentText, generateReceiptNumber, fmtTimestamp, buildReceiptText,
 } from "./helpers";
 import PinPad from "./PinPad";
 
@@ -61,6 +62,10 @@ export default function App() {
   const [detailCustomerId, setDetailCustomerId] = useState(null);
   const [detailSales, setDetailSales] = useState(null);
   const [showInvoice, setShowInvoice] = useState(false);
+  const [termModalSale, setTermModalSale] = useState(null);
+  const [detailReceipts, setDetailReceipts] = useState(null);
+  const [confirmPayModal, setConfirmPayModal] = useState(null); // { saleIds, items, total }
+  const [showReceipt, setShowReceipt] = useState(null);
 
   // ---------- new customer modal ----------
   const [showNewCustomer, setShowNewCustomer] = useState(false);
@@ -71,7 +76,7 @@ export default function App() {
   const [custPinResetKey, setCustPinResetKey] = useState(0);
 
   // ---------- new sale flow ----------
-  const [saleStep, setSaleStep] = useState("form"); // form, pin
+  const [saleStep, setSaleStep] = useState("form"); // form, term, pin
   const [saleSearch, setSaleSearch] = useState("");
   const [saleCustomerId, setSaleCustomerId] = useState("");
   const [saleValue, setSaleValue] = useState("");
@@ -84,6 +89,18 @@ export default function App() {
   // ---------- credit limit editing (detail page) ----------
   const [editingLimit, setEditingLimit] = useState(false);
   const [editLimitValue, setEditLimitValue] = useState("");
+
+  // ---------- edit customer info (phone + due day) ----------
+  const [editingCustomerInfo, setEditingCustomerInfo] = useState(false);
+  const [editCustPhone, setEditCustPhone] = useState("");
+  const [editCustDueDay, setEditCustDueDay] = useState(10);
+
+  // ---------- reset a customer's forgotten PIN ----------
+  const [resetPinModal, setResetPinModal] = useState(null); // { customerId, customerName, cpf }
+  const [resetPinStep, setResetPinStep] = useState("pin1"); // pin1, pin2
+  const [resetFirstPin, setResetFirstPin] = useState(null);
+  const [resetPinError, setResetPinError] = useState("");
+  const [resetPinResetKey, setResetPinResetKey] = useState(0);
 
   // ---------- cobranças search ----------
   const [cobrancaSearch, setCobrancaSearch] = useState("");
@@ -313,10 +330,24 @@ export default function App() {
   const saleAvailable = saleCustomer && saleCustomer.creditLimit ? saleCustomer.creditLimit - saleCustomerOwed : null;
   const saleExceedsLimit = saleAvailable !== null && saleVal > 0 && saleVal > saleAvailable;
 
-  const goToSalePin = () => {
+  const saleTermText = saleCustomer
+    ? buildAcknowledgmentText({
+        storeName: storeConfig?.storeName,
+        customerName: saleCustomer.name,
+        value: saleVal,
+        description: saleDesc.trim(),
+        dueDate: saleDuePreview,
+      })
+    : "";
+
+  const goToSaleTerm = () => {
     if (!saleCustomerId) return showToast("Selecione um cliente", true);
     const val = parseFloat(saleValue.replace(",", "."));
     if (!val || val <= 0) return showToast("Informe um valor válido", true);
+    setSaleStep("term");
+  };
+
+  const proceedFromTerm = () => {
     setSalePinError("");
     setSaleStep("pin");
   };
@@ -337,6 +368,13 @@ export default function App() {
 
       const val = parseFloat(saleValue.replace(",", "."));
       const dueDate = computeSaleDueDate(customer.dueDay || 10);
+      const acknowledgment = buildAcknowledgmentText({
+        storeName: storeConfig?.storeName,
+        customerName: customer.name,
+        value: val,
+        description: saleDesc.trim(),
+        dueDate,
+      });
       await addDoc(collection(db, "sales"), {
         customerUid: saleCustomerId,
         value: val,
@@ -345,6 +383,8 @@ export default function App() {
         dueDate,
         status: "confirmed",
         confirmedAt: serverTimestamp(),
+        acknowledgment,
+        termAcceptedAt: serverTimestamp(),
         createdBy: adminUid,
         createdAt: serverTimestamp(),
       });
@@ -365,31 +405,67 @@ export default function App() {
   const openDetail = async (custId) => {
     setDetailCustomerId(custId);
     setDetailSales(null);
+    setDetailReceipts(null);
     setShowInvoice(false);
     setEditingLimit(false);
+    setEditingCustomerInfo(false);
     const sales = await loadSalesFor(custId);
     setDetailSales(sales.sort((a, b) => (a.date < b.date ? 1 : -1)));
+    await loadDetailReceipts(custId);
   };
 
-  const markSalePaid = async (saleId) => {
-    setBusy(true);
-    await updateDoc(doc(db, "sales", saleId), { status: "paid" });
-    const sales = await loadSalesFor(detailCustomerId);
-    setDetailSales(sales.sort((a, b) => (a.date < b.date ? 1 : -1)));
-    setBusy(false);
-    showToast("Venda marcada como paga.");
+  const loadDetailReceipts = async (custId) => {
+    const q = query(collection(db, "receipts"), where("customerUid", "==", custId));
+    const snap = await getDocs(q);
+    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    list.sort((a, b) => (b.paidAt?.seconds || 0) - (a.paidAt?.seconds || 0));
+    setDetailReceipts(list);
   };
 
-  const markAllPaid = async () => {
+  const openPayConfirm = (saleIds) => {
+    const items = (detailSales || []).filter((s) => saleIds.includes(s.id));
+    const total = items.reduce((a, s) => a + s.value, 0);
+    setConfirmPayModal({ saleIds, items, total });
+  };
+
+  const confirmPayment = async () => {
+    if (!confirmPayModal || !detailCustomer) return;
     setBusy(true);
-    const sales = await loadSalesFor(detailCustomerId);
-    await Promise.all(
-      sales.filter((s) => s.status === "confirmed").map((s) => updateDoc(doc(db, "sales", s.id), { status: "paid" }))
-    );
-    const updated = await loadSalesFor(detailCustomerId);
-    setDetailSales(updated.sort((a, b) => (a.date < b.date ? 1 : -1)));
+    try {
+      await Promise.all(confirmPayModal.saleIds.map((id) => updateDoc(doc(db, "sales", id), { status: "paid" })));
+
+      const receiptData = {
+        customerUid: detailCustomerId,
+        customerName: detailCustomer.name,
+        customerCpf: detailCustomer.cpf,
+        adminUid,
+        items: confirmPayModal.items.map((s) => ({ date: s.date, description: s.description || "", value: s.value })),
+        total: confirmPayModal.total,
+        receiptNumber: generateReceiptNumber(),
+        paidAt: new Date(),
+        createdAt: new Date(),
+      };
+      const receiptRef = await addDoc(collection(db, "receipts"), receiptData);
+
+      const sales = await loadSalesFor(detailCustomerId);
+      setDetailSales(sales.sort((a, b) => (a.date < b.date ? 1 : -1)));
+      await loadDetailReceipts(detailCustomerId);
+
+      setConfirmPayModal(null);
+      setShowReceipt({ id: receiptRef.id, ...receiptData });
+      showToast("Pagamento confirmado! Recibo gerado.");
+    } catch (e) {
+      showToast("Erro ao confirmar pagamento", true);
+    }
     setBusy(false);
-    showToast("Fatura quitada!");
+  };
+
+  const sendReceiptWhatsapp = () => {
+    if (!showReceipt) return;
+    const phone = detailCustomer?.phone || customersIndex.find((c) => c.id === showReceipt.customerUid)?.phone;
+    if (!phone) return showToast("Esse cliente não tem telefone cadastrado", true);
+    const text = buildReceiptText({ storeName: storeConfig?.storeName, receipt: showReceipt });
+    window.open(whatsappLink(phone, text), "_blank");
   };
 
   const startEditLimit = () => {
@@ -406,6 +482,66 @@ export default function App() {
     setEditingLimit(false);
     setBusy(false);
     showToast("Limite de crédito atualizado.");
+  };
+
+  // ---------- edit customer info ----------
+  const startEditCustomer = () => {
+    setEditCustPhone(formatPhone(detailCustomer?.phone || ""));
+    setEditCustDueDay(detailCustomer?.dueDay || 10);
+    setEditingCustomerInfo(true);
+  };
+
+  const saveCustomerInfo = async () => {
+    const phoneDigits = onlyDigits(editCustPhone);
+    const dueDay = parseInt(editCustDueDay, 10) || 10;
+    setBusy(true);
+    await updateDoc(doc(db, "customers", detailCustomerId), { phone: phoneDigits, dueDay });
+    setCustomersIndex((prev) => prev.map((c) => (c.id === detailCustomerId ? { ...c, phone: phoneDigits, dueDay } : c)));
+    setEditingCustomerInfo(false);
+    setBusy(false);
+    showToast("Dados do cliente atualizados.");
+  };
+
+  // ---------- reset forgotten PIN ----------
+  const openResetPin = (customer) => {
+    setResetPinModal({ customerId: customer.id, customerName: customer.name, cpf: customer.cpf });
+    setResetPinStep("pin1");
+    setResetFirstPin(null);
+    setResetPinError("");
+  };
+
+  const onResetFirstPin = (pin) => {
+    setResetFirstPin(pin);
+    setResetPinError("");
+    setResetPinStep("pin2");
+  };
+
+  const onResetConfirmPin = async (pin) => {
+    if (pin !== resetFirstPin) {
+      setResetPinError("As senhas não conferem. Vamos tentar de novo.");
+      setResetFirstPin(null);
+      setResetPinResetKey((k) => k + 1);
+      setResetPinStep("pin1");
+      return;
+    }
+    setBusy(true);
+    try {
+      const newEmail = cpfToResetEmail(resetPinModal.cpf);
+      const cred = await createUserWithEmailAndPassword(secondaryAuth, newEmail, pin);
+      await signOut(secondaryAuth);
+      await updateDoc(doc(db, "customers", resetPinModal.customerId), { email: newEmail });
+      setCustomersIndex((prev) => prev.map((c) => (c.id === resetPinModal.customerId ? { ...c, email: newEmail } : c)));
+      const wasMidSale = saleStep === "pin" && saleCustomerId === resetPinModal.customerId;
+      setResetPinModal(null);
+      showToast("Senha redefinida com sucesso!");
+      if (wasMidSale) {
+        setSalePinError("");
+        setSalePinResetKey((k) => k + 1);
+      }
+    } catch (e) {
+      showToast(mapAuthError(e), true);
+    }
+    setBusy(false);
   };
 
   const sendInvoiceWhatsapp = () => {
@@ -575,7 +711,7 @@ export default function App() {
                     </div>
                   )}
 
-                  <button className="btn btn-primary" onClick={goToSalePin} style={{ marginTop: 6 }}>
+                  <button className="btn btn-primary" onClick={goToSaleTerm} style={{ marginTop: 6 }}>
                     Lançar venda
                   </button>
                   <div className="warn-banner" style={{ marginTop: 12 }}>
@@ -583,6 +719,23 @@ export default function App() {
                     Em seguida, entregue o aparelho para o cliente digitar a senha dele e confirmar.
                   </div>
                 </>
+              )}
+
+              {adminTab === "venda" && saleStep === "term" && (
+                <div>
+                  <div className="section-title"><FileText size={16} /> Termo de reconhecimento</div>
+                  <div className="card term-card">
+                    {saleTermText}
+                  </div>
+                  <div className="info-banner">
+                    <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                    Peça para o cliente ler o texto acima antes de digitar a senha. O texto fica salvo junto com esta compra.
+                  </div>
+                  <div className="action-row" style={{ marginTop: 6 }}>
+                    <button className="btn btn-outline" onClick={() => setSaleStep("form")}>Voltar</button>
+                    <button className="btn btn-primary" onClick={proceedFromTerm}>Cliente concorda — continuar</button>
+                  </div>
+                </div>
               )}
 
               {adminTab === "venda" && saleStep === "pin" && (
@@ -594,6 +747,7 @@ export default function App() {
                   <PinPad resetKey={salePinResetKey} busy={salePinBusy} onComplete={onSalePinComplete} />
                   <div className="pin-error">{salePinError}</div>
                   <button className="link-btn" style={{ marginTop: 14 }} onClick={cancelSalePin} disabled={salePinBusy}>Cancelar</button>
+                  <button className="link-btn" onClick={() => openResetPin(saleCustomer)} disabled={salePinBusy}>Cliente esqueceu a senha? Redefinir agora</button>
                 </div>
               )}
 
@@ -616,21 +770,50 @@ export default function App() {
                 <ArrowLeft size={16} /> Voltar
               </div>
               <div className="card">
-                <div className="cust-name" style={{ fontSize: 17 }}>{detailCustomer.name}</div>
+                <div className="row-between">
+                  <div className="cust-name" style={{ fontSize: 17 }}>{detailCustomer.name}</div>
+                  {!editingCustomerInfo && (
+                    <button className="link-btn" style={{ padding: "2px 6px" }} onClick={startEditCustomer}>editar</button>
+                  )}
+                </div>
                 <div className="cust-cpf" style={{ marginTop: 4 }}>
                   <CreditCard size={12} style={{ display: "inline", marginRight: 4 }} />
                   {formatCPF(detailCustomer.cpf)}
                 </div>
-                {detailCustomer.phone && (
-                  <div className="cust-cpf" style={{ marginTop: 3 }}>
-                    <Phone size={12} style={{ display: "inline", marginRight: 4 }} />
-                    {formatPhone(detailCustomer.phone)}
+
+                {!editingCustomerInfo ? (
+                  <>
+                    {detailCustomer.phone && (
+                      <div className="cust-cpf" style={{ marginTop: 3 }}>
+                        <Phone size={12} style={{ display: "inline", marginRight: 4 }} />
+                        {formatPhone(detailCustomer.phone)}
+                      </div>
+                    )}
+                    <div className="cust-cpf" style={{ marginTop: 3 }}>
+                      <Calendar size={12} style={{ display: "inline", marginRight: 4 }} />
+                      Fatura vence todo dia {detailCustomer.dueDay || 10}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ marginTop: 10 }}>
+                    <label className="field-label">Telefone</label>
+                    <input className="field field-mono" value={editCustPhone}
+                      onChange={(e) => setEditCustPhone(formatPhone(e.target.value))} inputMode="numeric" autoFocus />
+                    <label className="field-label">Dia de vencimento da fatura</label>
+                    <select className="field" value={editCustDueDay} onChange={(e) => setEditCustDueDay(e.target.value)}>
+                      {DUE_DAYS.map((d) => <option key={d} value={d}>Todo dia {d}</option>)}
+                    </select>
+                    <div className="action-row" style={{ marginTop: 0 }}>
+                      <button className="btn btn-primary btn-sm" onClick={saveCustomerInfo} disabled={busy}>Salvar</button>
+                      <button className="btn btn-outline btn-sm" onClick={() => setEditingCustomerInfo(false)} disabled={busy}>Cancelar</button>
+                    </div>
                   </div>
                 )}
-                <div className="cust-cpf" style={{ marginTop: 3 }}>
-                  <Calendar size={12} style={{ display: "inline", marginRight: 4 }} />
-                  Fatura vence todo dia {detailCustomer.dueDay || 10}
-                </div>
+
+                <button className="link-btn" style={{ padding: "8px 0 0", display: "block" }} onClick={() => openResetPin(detailCustomer)}>
+                  <Lock size={12} style={{ display: "inline", marginRight: 4 }} />
+                  Redefinir senha do cliente
+                </button>
 
                 {!editingLimit ? (
                   <div className="row-between" style={{ marginTop: 8 }}>
@@ -665,7 +848,7 @@ export default function App() {
                     )}
                   </div>
                   {detailOwed > 0 && (
-                    <button className="btn btn-primary btn-sm" onClick={markAllPaid} disabled={busy}>Marcar tudo pago</button>
+                    <button className="btn btn-primary btn-sm" onClick={() => openPayConfirm(openInvoiceSales.map((s) => s.id))} disabled={busy}>Marcar tudo pago</button>
                   )}
                 </div>
                 {detailOwed > 0 && (
@@ -701,13 +884,41 @@ export default function App() {
                         <Badge kind={saleDisplayStatus(s)} />
                       </div>
                       {s.status === "confirmed" && (
-                        <button className="btn btn-outline btn-sm" style={{ marginTop: 10 }} onClick={() => markSalePaid(s.id)} disabled={busy}>
+                        <button className="btn btn-outline btn-sm" style={{ marginTop: 10 }} onClick={() => openPayConfirm([s.id])} disabled={busy}>
                           Marcar como pago
+                        </button>
+                      )}
+                      {s.acknowledgment && (
+                        <button className="link-btn" style={{ padding: "8px 0 0", display: "block" }} onClick={() => setTermModalSale(s)}>
+                          <FileText size={12} style={{ display: "inline", marginRight: 4 }} />
+                          Ver termo aceito
                         </button>
                       )}
                     </div>
                   ))}
                 </div>
+              )}
+
+              {detailReceipts && detailReceipts.length > 0 && (
+                <>
+                  <div className="section-title" style={{ marginTop: 4 }}><FileText size={16} /> Recibos de pagamento</div>
+                  <div className="card">
+                    {detailReceipts.map((r) => (
+                      <div className="sale-item" key={r.id}>
+                        <div className="sale-top">
+                          <div>
+                            <div className="sale-val">{brl(r.total)}</div>
+                            <div className="sale-meta">
+                              <span>Pago em {fmtTimestamp(r.paidAt)}</span>
+                              <span>Nº {r.receiptNumber}</span>
+                            </div>
+                          </div>
+                          <button className="link-btn" onClick={() => setShowReceipt(r)}>Ver recibo</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
               )}
             </>
           )}
@@ -827,6 +1038,121 @@ export default function App() {
               <button className="btn btn-primary no-print" style={{ marginTop: 18 }} onClick={() => window.print()}>
                 <Printer size={16} /> Imprimir
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* TERM VIEW MODAL */}
+        {termModalSale && (
+          <div className="modal-overlay" onClick={() => setTermModalSale(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="row-between" style={{ marginBottom: 14 }}>
+                <div className="section-title" style={{ margin: 0 }}><FileText size={16} /> Termo aceito</div>
+                <button className="icon-btn icon-btn-light" onClick={() => setTermModalSale(null)}><X size={16} /></button>
+              </div>
+              <div className="card term-card">{termModalSale.acknowledgment}</div>
+              <div className="cust-cpf" style={{ marginTop: 10 }}>
+                Compra de {brl(termModalSale.value)} em {fmtDate(termModalSale.date)} — confirmado por senha pessoal do cliente.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* PAYMENT CONFIRMATION MODAL */}
+        {confirmPayModal && (
+          <div className="modal-overlay" onClick={() => !busy && setConfirmPayModal(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="section-title"><Receipt size={16} /> Confirmar pagamento</div>
+              <div className="card total-box">
+                <div className="total-label">{confirmPayModal.items.length} compra(s) selecionada(s)</div>
+                <div className="total-value ok">{brl(confirmPayModal.total)}</div>
+              </div>
+              <p style={{ fontSize: 13.5, color: "var(--muted)", marginTop: 0, marginBottom: 18, lineHeight: 1.5 }}>
+                Confirma que {detailCustomer?.name} pagou esse valor? Um recibo será gerado e ficará salvo para consulta.
+              </p>
+              <div className="action-row">
+                <button className="btn btn-outline" onClick={() => setConfirmPayModal(null)} disabled={busy}>Cancelar</button>
+                <button className="btn btn-primary" onClick={confirmPayment} disabled={busy}>Confirmar pagamento</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* RECEIPT VIEW / PRINT MODAL */}
+        {showReceipt && (
+          <div className="modal-overlay">
+            <div className="modal invoice-modal">
+              <div className="no-print row-between" style={{ marginBottom: 14 }}>
+                <div className="section-title" style={{ margin: 0 }}>Recibo de pagamento</div>
+                <button className="icon-btn icon-btn-light" onClick={() => setShowReceipt(null)}><X size={16} /></button>
+              </div>
+
+              <div className="invoice-print-root">
+                <div className="invoice-header">
+                  {storeConfig?.logoUrl && <img src={storeConfig.logoUrl} alt="Logo" className="invoice-logo" />}
+                  <div>
+                    <div className="invoice-store">{storeConfig?.storeName || "Mercado"}</div>
+                    <div className="invoice-sub">Recibo Nº {showReceipt.receiptNumber}</div>
+                  </div>
+                </div>
+                <div className="invoice-customer">
+                  <div><strong>{showReceipt.customerName}</strong></div>
+                  <div>{formatCPF(showReceipt.customerCpf)}</div>
+                </div>
+                <table className="invoice-table">
+                  <thead>
+                    <tr><th>Data</th><th>Descrição</th><th style={{ textAlign: "right" }}>Valor</th></tr>
+                  </thead>
+                  <tbody>
+                    {showReceipt.items.map((it, i) => (
+                      <tr key={i}>
+                        <td>{fmtDate(it.date)}</td>
+                        <td>{it.description || "-"}</td>
+                        <td style={{ textAlign: "right" }}>{brl(it.value)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="invoice-total-row">
+                  <span>Total pago</span>
+                  <span>{brl(showReceipt.total)}</span>
+                </div>
+                <div className="invoice-due">Pago em: {fmtTimestamp(showReceipt.paidAt)}</div>
+              </div>
+
+              <div className="action-row no-print" style={{ marginTop: 18 }}>
+                <button className="btn btn-outline" onClick={sendReceiptWhatsapp}>
+                  <MessageCircle size={16} /> WhatsApp
+                </button>
+                <button className="btn btn-primary" onClick={() => window.print()}>
+                  <Printer size={16} /> Imprimir
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* RESET PIN MODAL */}
+        {resetPinModal && (
+          <div className="modal-overlay" onClick={() => !busy && setResetPinModal(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              {resetPinStep === "pin1" && (
+                <div style={{ textAlign: "center" }}>
+                  <div className="section-title" style={{ justifyContent: "center" }}>Nova senha</div>
+                  <div className="pin-hint">Peça para {resetPinModal.customerName.split(" ")[0]} criar uma nova senha de 6 dígitos</div>
+                  <PinPad resetKey={resetPinResetKey} onComplete={onResetFirstPin} />
+                  <div className="pin-error">{resetPinError}</div>
+                  <button className="link-btn" onClick={() => setResetPinModal(null)}>Cancelar</button>
+                </div>
+              )}
+              {resetPinStep === "pin2" && (
+                <div style={{ textAlign: "center" }}>
+                  <div className="section-title" style={{ justifyContent: "center" }}>Confirme a nova senha</div>
+                  <div className="pin-hint">Digite a mesma senha novamente</div>
+                  <PinPad busy={busy} onComplete={onResetConfirmPin} />
+                  <button className="link-btn" onClick={() => setResetPinStep("pin1")} disabled={busy}>Cancelar</button>
+                </div>
+              )}
             </div>
           </div>
         )}

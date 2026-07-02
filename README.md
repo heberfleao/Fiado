@@ -22,10 +22,39 @@ para confirmar e reconhecer a compra. Funciona em qualquer navegador
   mês seguinte.
 - Confirmação da compra pelo próprio cliente, no pinpad, na hora.
 - Aba de Cobranças com busca, mostrando só quem tem saldo em aberto.
+- Termo de reconhecimento de dívida: antes de digitar a senha, o cliente
+  vê um texto confirmando o valor, a descrição e o vencimento da compra.
+  Esse texto exato fica salvo junto com a venda e pode ser consultado
+  depois no histórico ("Ver termo aceito"), reforçando o valor como
+  prova em caso de cobrança.
+- Edição do cadastro do cliente (telefone e dia de vencimento da fatura)
+  a qualquer momento, direto na ficha do cliente.
+- Redefinição da senha do cliente caso ele esqueça — pode ser feita pela
+  ficha do cliente ou direto na hora da confirmação da compra, caso ele
+  não lembre a senha no pinpad.
+- Confirmação antes de marcar uma compra ou fatura como paga: ao confirmar,
+  é gerado automaticamente um recibo de pagamento (imprimível e que pode
+  ser enviado por WhatsApp), guardado no histórico do cliente para
+  consulta a qualquer momento.
 - Fatura imprimível (com todas as compras discriminadas) e envio da
   fatura por WhatsApp para o telefone cadastrado do cliente.
 - Espaço para logo do mercado no topo do app (clique no quadrado ao lado
   do nome do mercado para enviar uma imagem).
+
+## Atualizando uma versão já publicada
+
+Ao subir uma nova versão dos arquivos (GitHub + Vercel), verifique se o
+arquivo `firestore.rules` mudou desde a última vez. Se mudou, é preciso
+colar o conteúdo atualizado na aba **Regras** do Firestore no console do
+Firebase e publicar de novo — o Vercel não faz isso automaticamente.
+
+## Aviso importante
+
+O termo de reconhecimento e os registros do app ajudam a reunir provas
+(data, valor, confirmação por senha pessoal) caso você precise cobrar
+uma dívida na Justiça, mas isso não é um documento com força de título
+executivo (como uma nota promissória assinada). Para dívidas de valor
+alto ou casos mais delicados, vale consultar um advogado.
 
 ## Segurança
 

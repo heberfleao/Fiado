@@ -52,6 +52,11 @@ export const addDaysISO = (days) => {
 // O cliente nunca vê nem usa esse e-mail — ele só digita CPF e senha.
 export const cpfToEmail = (cpfDigits) => `cliente.${cpfDigits}@caderneta.fiado`;
 
+// Gera um novo e-mail sintético único, usado ao redefinir a senha do
+// cliente (a conta antiga fica órfã e sem uso; o campo "email" salvo no
+// cadastro do cliente passa a apontar para essa nova conta).
+export const cpfToResetEmail = (cpfDigits) => `cliente.${cpfDigits}.${Date.now()}@caderneta.fiado`;
+
 export function saleDisplayStatus(sale) {
   if (sale.status === "paid") return "PAGO";
   if (sale.dueDate && sale.dueDate < todayISO()) return "VENCIDO";
@@ -89,6 +94,14 @@ export function computeSaleDueDate(dueDay, fromDate = new Date()) {
 
 // Monta o texto da fatura (usado tanto para WhatsApp quanto como base do
 // que aparece na impressão).
+// Texto de reconhecimento de dívida que o cliente lê antes de digitar a
+// senha. O texto exato fica salvo junto com a venda, servindo como registro
+// do que foi apresentado e aceito no momento da compra.
+export function buildAcknowledgmentText({ storeName, customerName, value, description, dueDate }) {
+  const desc = description ? ` referente a "${description}"` : "";
+  return `Eu, ${customerName}, confirmo o recebimento de produtos/serviços${desc} no valor de ${brl(value)}, junto a ${storeName || "o mercado"}, com vencimento em ${fmtDate(dueDate)}, e me comprometo a efetuar o pagamento integral até essa data.`;
+}
+
 export function buildInvoiceText({ storeName, customer, sales, total }) {
   const lines = [];
   lines.push(`*Fatura — ${storeName || "Mercado"}*`);
@@ -110,4 +123,36 @@ export function whatsappLink(phoneDigits, text) {
   const digits = onlyDigits(phoneDigits);
   const withCountry = digits.startsWith("55") ? digits : `55${digits}`;
   return `https://wa.me/${withCountry}?text=${encodeURIComponent(text)}`;
+}
+
+// Número legível do recibo, baseado em data e hora (sem depender de um
+// contador compartilhado no banco).
+export function generateReceiptNumber() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+// Formata um Timestamp do Firestore (ou Date) como data e hora em pt-BR.
+export function fmtTimestamp(ts) {
+  if (!ts) return "-";
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return `${d.toLocaleDateString("pt-BR")} às ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+export function buildReceiptText({ storeName, receipt }) {
+  const lines = [];
+  lines.push(`*Recibo de pagamento — ${storeName || "Mercado"}*`);
+  lines.push(`Nº ${receipt.receiptNumber}`);
+  lines.push(`Cliente: ${receipt.customerName}`);
+  lines.push("");
+  lines.push("Itens quitados:");
+  receipt.items.forEach((it) => {
+    const desc = it.description ? ` (${it.description})` : "";
+    lines.push(`- ${fmtDate(it.date)}: ${brl(it.value)}${desc}`);
+  });
+  lines.push("");
+  lines.push(`*Total pago: ${brl(receipt.total)}*`);
+  lines.push(`Data do pagamento: ${fmtTimestamp(receipt.paidAt)}`);
+  return lines.join("\n");
 }

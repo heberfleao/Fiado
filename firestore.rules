@@ -35,5 +35,11 @@ service cloud.firestore {
     match /sales/{saleId} {
       allow read, create, update, delete: if isAdmin();
     }
+
+    // Recibos de pagamento (gerados ao confirmar um pagamento). Servem
+    // como registro histórico das faturas já quitadas.
+    match /receipts/{receiptId} {
+      allow read, create, update, delete: if isAdmin();
+    }
   }
 }
