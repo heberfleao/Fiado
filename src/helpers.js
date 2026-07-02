@@ -104,7 +104,9 @@ export function buildAcknowledgmentText({ storeName, customerName, value, descri
 
 export function buildInvoiceText({ storeName, customer, sales, total }) {
   const lines = [];
-  lines.push(`*Fatura — ${storeName || "Mercado"}*`);
+  const nextDue = sales.map((s) => s.dueDate).sort()[0];
+  lines.push(`Olá, seguem os dados da sua conta no mercado ${storeName || "Mercado"} com vencimento em ${fmtDate(nextDue)}.`);
+  lines.push("");
   lines.push(`Cliente: ${customer.name}`);
   lines.push("");
   lines.push("Compras:");
@@ -114,8 +116,8 @@ export function buildInvoiceText({ storeName, customer, sales, total }) {
   });
   lines.push("");
   lines.push(`*Total: ${brl(total)}*`);
-  const nextDue = sales.map((s) => s.dueDate).sort()[0];
-  if (nextDue) lines.push(`Vencimento: ${fmtDate(nextDue)}`);
+  lines.push("");
+  lines.push("Mensagem automática, desconsidere caso já tenha efetuado o pagamento.");
   return lines.join("\n");
 }
 
@@ -123,6 +125,43 @@ export function whatsappLink(phoneDigits, text) {
   const digits = onlyDigits(phoneDigits);
   const withCountry = digits.startsWith("55") ? digits : `55${digits}`;
   return `https://wa.me/${withCountry}?text=${encodeURIComponent(text)}`;
+}
+
+export const PAYMENT_METHODS = [
+  { value: "dinheiro", label: "Dinheiro" },
+  { value: "cartao_credito", label: "Cartão de crédito" },
+  { value: "cartao_debito", label: "Cartão de débito" },
+  { value: "pix", label: "Pix" },
+];
+
+export function paymentMethodLabel(value) {
+  return PAYMENT_METHODS.find((m) => m.value === value)?.label || "";
+}
+
+// Linha de saldo usada nas mensagens de WhatsApp: mostra o crédito ainda
+// disponível (se o cliente tiver limite definido) ou o saldo devedor atual.
+export function buildBalanceLine(customer, owedAfter) {
+  if (customer?.creditLimit) {
+    const avail = customer.creditLimit - owedAfter;
+    return `Saldo disponível: ${brl(avail)} (limite de ${brl(customer.creditLimit)})`;
+  }
+  return `Saldo devedor atual: ${brl(owedAfter)}`;
+}
+
+// Mensagem de WhatsApp enviada logo após uma compra ser confirmada.
+export function buildPurchaseText({ storeName, customer, sale, owedAfter }) {
+  const lines = [];
+  lines.push(`Olá, aqui está o comprovante da sua compra no mercado ${storeName || "Mercado"}:`);
+  lines.push("");
+  lines.push(`Data: ${fmtDate(sale.date)}`);
+  if (sale.description) lines.push(`Descrição: ${sale.description}`);
+  lines.push(`Valor: ${brl(sale.value)}`);
+  lines.push(`Vencimento: ${fmtDate(sale.dueDate)}`);
+  lines.push("");
+  lines.push(buildBalanceLine(customer, owedAfter));
+  lines.push("");
+  lines.push("Mensagem automática.");
+  return lines.join("\n");
 }
 
 // Número legível do recibo, baseado em data e hora (sem depender de um
@@ -140,7 +179,7 @@ export function fmtTimestamp(ts) {
   return `${d.toLocaleDateString("pt-BR")} às ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
-export function buildReceiptText({ storeName, receipt }) {
+export function buildReceiptText({ storeName, receipt, customer, owedAfter }) {
   const lines = [];
   lines.push(`*Recibo de pagamento — ${storeName || "Mercado"}*`);
   lines.push(`Nº ${receipt.receiptNumber}`);
@@ -153,6 +192,13 @@ export function buildReceiptText({ storeName, receipt }) {
   });
   lines.push("");
   lines.push(`*Total pago: ${brl(receipt.total)}*`);
+  if (receipt.paymentMethod) lines.push(`Forma de pagamento: ${paymentMethodLabel(receipt.paymentMethod)}`);
   lines.push(`Data do pagamento: ${fmtTimestamp(receipt.paidAt)}`);
+  if (customer) {
+    lines.push("");
+    lines.push(buildBalanceLine(customer, owedAfter ?? 0));
+  }
+  lines.push("");
+  lines.push("Mensagem automática.");
   return lines.join("\n");
 }

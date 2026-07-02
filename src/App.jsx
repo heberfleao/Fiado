@@ -20,6 +20,7 @@ import {
   onlyDigits, formatCPF, formatPhone, isValidCPF, brl, fmtDate, todayISO,
   cpfToEmail, cpfToResetEmail, saleDisplayStatus, computeSaleDueDate, buildInvoiceText, whatsappLink,
   buildAcknowledgmentText, generateReceiptNumber, fmtTimestamp, buildReceiptText,
+  PAYMENT_METHODS, paymentMethodLabel, buildBalanceLine, buildPurchaseText,
 } from "./helpers";
 import PinPad from "./PinPad";
 
@@ -30,6 +31,7 @@ function Badge({ kind }) {
     CONFIRMADO: "confirmado",
     PAGO: "pago",
     VENCIDO: "vencido",
+    ANULADO: "anulado",
   };
   return <span className={"badge badge-" + (map[kind] || "confirmado")}>{kind}</span>;
 }
@@ -64,8 +66,16 @@ export default function App() {
   const [showInvoice, setShowInvoice] = useState(false);
   const [termModalSale, setTermModalSale] = useState(null);
   const [detailReceipts, setDetailReceipts] = useState(null);
-  const [confirmPayModal, setConfirmPayModal] = useState(null); // { saleIds, items, total }
+  const [confirmPayModal, setConfirmPayModal] = useState(null); // { saleIds, items, total, paymentMethod }
   const [showReceipt, setShowReceipt] = useState(null);
+
+  // ---------- undo a payment ----------
+  const [undoModal, setUndoModal] = useState(null); // receipt
+  const [undoPassword, setUndoPassword] = useState("");
+  const [undoError, setUndoError] = useState("");
+
+  // ---------- post-sale success screen ----------
+  const [lastSaleInfo, setLastSaleInfo] = useState(null); // { customer, sale, whatsappText }
 
   // ---------- new customer modal ----------
   const [showNewCustomer, setShowNewCustomer] = useState(false);
@@ -76,7 +86,7 @@ export default function App() {
   const [custPinResetKey, setCustPinResetKey] = useState(0);
 
   // ---------- new sale flow ----------
-  const [saleStep, setSaleStep] = useState("form"); // form, pin
+  const [saleStep, setSaleStep] = useState("form"); // form, pin, success
   const [saleSearch, setSaleSearch] = useState("");
   const [saleCustomerId, setSaleCustomerId] = useState("");
   const [saleValue, setSaleValue] = useState("");
@@ -385,16 +395,37 @@ export default function App() {
         createdAt: serverTimestamp(),
       });
 
+      const saleRecord = { date: todayISO(), description: saleDesc.trim(), value: val, dueDate };
+      const owedAfter = saleCustomerOwed + val;
+      const whatsappText = buildPurchaseText({
+        storeName: storeConfig?.storeName,
+        customer,
+        sale: saleRecord,
+        owedAfter,
+      });
+
       showToast(`Compra de ${brl(val)} confirmada e lançada para ${customer.name}.`);
+      setLastSaleInfo({ customer, sale: saleRecord, whatsappText });
       setSaleValue("");
       setSaleDesc("");
       clearSaleCustomer();
-      setSaleStep("form");
+      setSaleStep("success");
     } catch (e) {
       setSalePinError("Senha incorreta. Peça para o cliente tentar novamente.");
       setSalePinResetKey((k) => k + 1);
     }
     setSalePinBusy(false);
+  };
+
+  const sendPurchaseWhatsapp = () => {
+    if (!lastSaleInfo) return;
+    if (!lastSaleInfo.customer.phone) return showToast("Esse cliente não tem telefone cadastrado", true);
+    window.open(whatsappLink(lastSaleInfo.customer.phone, lastSaleInfo.whatsappText), "_blank");
+  };
+
+  const finishSaleFlow = () => {
+    setLastSaleInfo(null);
+    setSaleStep("form");
   };
 
   // ---------- customer detail ----------
@@ -421,11 +452,12 @@ export default function App() {
   const openPayConfirm = (saleIds) => {
     const items = (detailSales || []).filter((s) => saleIds.includes(s.id));
     const total = items.reduce((a, s) => a + s.value, 0);
-    setConfirmPayModal({ saleIds, items, total });
+    setConfirmPayModal({ saleIds, items, total, paymentMethod: "" });
   };
 
   const confirmPayment = async () => {
     if (!confirmPayModal || !detailCustomer) return;
+    if (!confirmPayModal.paymentMethod) return showToast("Selecione a forma de pagamento", true);
     setBusy(true);
     try {
       await Promise.all(confirmPayModal.saleIds.map((id) => updateDoc(doc(db, "sales", id), { status: "paid" })));
@@ -435,11 +467,14 @@ export default function App() {
         customerName: detailCustomer.name,
         customerCpf: detailCustomer.cpf,
         adminUid,
+        saleIds: confirmPayModal.saleIds,
         items: confirmPayModal.items.map((s) => ({ date: s.date, description: s.description || "", value: s.value })),
         total: confirmPayModal.total,
+        paymentMethod: confirmPayModal.paymentMethod,
         receiptNumber: generateReceiptNumber(),
         paidAt: new Date(),
         createdAt: new Date(),
+        voided: false,
       };
       const receiptRef = await addDoc(collection(db, "receipts"), receiptData);
 
@@ -456,11 +491,40 @@ export default function App() {
     setBusy(false);
   };
 
+  const openUndo = (receipt) => {
+    setUndoModal(receipt);
+    setUndoPassword("");
+    setUndoError("");
+  };
+
+  const confirmUndo = async () => {
+    if (!undoModal || !storeConfig?.email) return;
+    setBusy(true);
+    setUndoError("");
+    try {
+      await signInWithEmailAndPassword(auth, storeConfig.email, undoPassword);
+      await Promise.all((undoModal.saleIds || []).map((id) => updateDoc(doc(db, "sales", id), { status: "confirmed" })));
+      await updateDoc(doc(db, "receipts", undoModal.id), { voided: true, voidedAt: new Date() });
+
+      const sales = await loadSalesFor(detailCustomerId);
+      setDetailSales(sales.sort((a, b) => (a.date < b.date ? 1 : -1)));
+      await loadDetailReceipts(detailCustomerId);
+
+      setUndoModal(null);
+      showToast("Pagamento desfeito.");
+    } catch (e) {
+      setUndoError("Senha incorreta.");
+    }
+    setBusy(false);
+  };
+
   const sendReceiptWhatsapp = () => {
     if (!showReceipt) return;
-    const phone = detailCustomer?.phone || customersIndex.find((c) => c.id === showReceipt.customerUid)?.phone;
+    const customer = customersIndex.find((c) => c.id === showReceipt.customerUid) || detailCustomer;
+    const phone = customer?.phone;
     if (!phone) return showToast("Esse cliente não tem telefone cadastrado", true);
-    const text = buildReceiptText({ storeName: storeConfig?.storeName, receipt: showReceipt });
+    const owedAfter = Math.max(detailOwed, 0);
+    const text = buildReceiptText({ storeName: storeConfig?.storeName, receipt: showReceipt, customer, owedAfter });
     window.open(whatsappLink(phone, text), "_blank");
   };
 
@@ -736,6 +800,24 @@ export default function App() {
                 </div>
               )}
 
+              {adminTab === "venda" && saleStep === "success" && lastSaleInfo && (
+                <div className="center-screen" style={{ paddingTop: 10 }}>
+                  <div className="icon-circle"><User size={22} /></div>
+                  <div className="ledger-title" style={{ fontSize: 19 }}>Compra confirmada!</div>
+                  <div className="ledger-tag" style={{ marginBottom: 18 }}>
+                    {brl(lastSaleInfo.sale.value)} para {lastSaleInfo.customer.name}
+                  </div>
+                  <div style={{ width: "100%" }}>
+                    <button className="btn btn-primary" onClick={sendPurchaseWhatsapp}>
+                      <MessageCircle size={16} /> Enviar comprovante por WhatsApp
+                    </button>
+                    <button className="btn btn-outline" style={{ marginTop: 10 }} onClick={finishSaleFlow}>
+                      Concluir
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {adminTab === "cobrancas" && (
                 <>
                   <div className="section-title"><Receipt size={16} /> Cobranças</div>
@@ -896,10 +978,18 @@ export default function App() {
                             <div className="sale-meta">
                               <span>Pago em {fmtTimestamp(r.paidAt)}</span>
                               <span>Nº {r.receiptNumber}</span>
+                              {r.paymentMethod && <span>{paymentMethodLabel(r.paymentMethod)}</span>}
                             </div>
                           </div>
-                          <button className="link-btn" onClick={() => setShowReceipt(r)}>Ver recibo</button>
+                          {r.voided ? <Badge kind="ANULADO" /> : <button className="link-btn" onClick={() => setShowReceipt(r)}>Ver recibo</button>}
                         </div>
+                        {r.voided ? (
+                          <div className="cust-cpf" style={{ marginTop: 6 }}>Pagamento desfeito em {fmtTimestamp(r.voidedAt)}</div>
+                        ) : (
+                          <button className="link-btn" style={{ padding: "6px 0 0", display: "block" }} onClick={() => openUndo(r)}>
+                            Desfazer pagamento
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -909,7 +999,7 @@ export default function App() {
           )}
         </div>
 
-        {screen === "admin" && !detailCustomerId && !(adminTab === "venda" && saleStep === "pin") && (
+        {screen === "admin" && !detailCustomerId && !(adminTab === "venda" && (saleStep === "pin" || saleStep === "success")) && (
           <div className="tabs">
             <div className="tabs-inner">
               <button className={"tab-btn" + (adminTab === "clientes" ? " active" : "")} onClick={() => { setAdminTab("clientes"); setSaleStep("form"); }}>
@@ -1052,12 +1142,25 @@ export default function App() {
                 <div className="total-label">{confirmPayModal.items.length} compra(s) selecionada(s)</div>
                 <div className="total-value ok">{brl(confirmPayModal.total)}</div>
               </div>
-              <p style={{ fontSize: 13.5, color: "var(--muted)", marginTop: 0, marginBottom: 18, lineHeight: 1.5 }}>
+              <p style={{ fontSize: 13.5, color: "var(--muted)", marginTop: 0, marginBottom: 14, lineHeight: 1.5 }}>
                 Confirma que {detailCustomer?.name} pagou esse valor? Um recibo será gerado e ficará salvo para consulta.
               </p>
-              <div className="action-row">
+              <label className="field-label">Forma de pagamento</label>
+              <div className="payment-method-grid">
+                {PAYMENT_METHODS.map((m) => (
+                  <button
+                    key={m.value}
+                    type="button"
+                    className={"payment-method-chip" + (confirmPayModal.paymentMethod === m.value ? " selected" : "")}
+                    onClick={() => setConfirmPayModal({ ...confirmPayModal, paymentMethod: m.value })}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <div className="action-row" style={{ marginTop: 16 }}>
                 <button className="btn btn-outline" onClick={() => setConfirmPayModal(null)} disabled={busy}>Cancelar</button>
-                <button className="btn btn-primary" onClick={confirmPayment} disabled={busy}>Confirmar pagamento</button>
+                <button className="btn btn-primary" onClick={confirmPayment} disabled={busy || !confirmPayModal.paymentMethod}>Confirmar pagamento</button>
               </div>
             </div>
           </div>
@@ -1102,6 +1205,9 @@ export default function App() {
                   <span>Total pago</span>
                   <span>{brl(showReceipt.total)}</span>
                 </div>
+                {showReceipt.paymentMethod && (
+                  <div className="invoice-due">Forma de pagamento: {paymentMethodLabel(showReceipt.paymentMethod)}</div>
+                )}
                 <div className="invoice-due">Pago em: {fmtTimestamp(showReceipt.paidAt)}</div>
               </div>
 
@@ -1112,6 +1218,34 @@ export default function App() {
                 <button className="btn btn-primary" onClick={() => window.print()}>
                   <Printer size={16} /> Imprimir
                 </button>
+              </div>
+              {!showReceipt.voided && (
+                <button className="link-btn no-print" style={{ width: "100%", textAlign: "center", marginTop: 6 }}
+                  onClick={() => { setShowReceipt(null); openUndo(showReceipt); }}>
+                  Desfazer este pagamento
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* UNDO PAYMENT MODAL */}
+        {undoModal && (
+          <div className="modal-overlay" onClick={() => !busy && setUndoModal(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="section-title"><Lock size={16} /> Desfazer pagamento</div>
+              <p style={{ fontSize: 13.5, color: "var(--muted)", marginTop: 0, marginBottom: 14, lineHeight: 1.5 }}>
+                Isso vai voltar {brl(undoModal.total)} para o saldo devedor do cliente e anular o recibo Nº {undoModal.receiptNumber}.
+                Digite a senha do mercado para confirmar.
+              </p>
+              <label className="field-label">Senha do mercado</label>
+              <input className="field" type="password" value={undoPassword} autoFocus
+                onChange={(e) => { setUndoPassword(e.target.value); setUndoError(""); }}
+                onKeyDown={(e) => e.key === "Enter" && confirmUndo()} />
+              {undoError && <div style={{ color: "var(--danger)", fontSize: 12.5, marginTop: -8, marginBottom: 12 }}>{undoError}</div>}
+              <div className="action-row">
+                <button className="btn btn-outline" onClick={() => setUndoModal(null)} disabled={busy}>Cancelar</button>
+                <button className="btn btn-danger" onClick={confirmUndo} disabled={busy || !undoPassword}>Desfazer pagamento</button>
               </div>
             </div>
           </div>

@@ -32,6 +32,14 @@ para confirmar e reconhecer a compra. Funciona em qualquer navegador
 - Redefinição da senha do cliente caso ele esqueça — pode ser feita pela
   ficha do cliente ou direto na hora da confirmação da compra, caso ele
   não lembre a senha no pinpad.
+- Forma de pagamento (dinheiro, cartão de crédito, cartão de débito ou
+  Pix) selecionada ao confirmar um pagamento, salva no recibo.
+- Opção de desfazer um pagamento (pede a senha do mercado para confirmar),
+  voltando o saldo do cliente e marcando o recibo como anulado — sem
+  apagar o histórico.
+- Toda venda confirmada e todo pagamento recebido oferecem o envio
+  automático de um WhatsApp para o cliente com os dados da transação e o
+  saldo disponível (ou saldo devedor, se o cliente não tiver limite).
 - Confirmação antes de marcar uma compra ou fatura como paga: ao confirmar,
   é gerado automaticamente um recibo de pagamento (imprimível e que pode
   ser enviado por WhatsApp), guardado no histórico do cliente para

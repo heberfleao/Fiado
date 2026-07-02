@@ -114,6 +114,14 @@ body { font-family: 'Inter', -apple-system, sans-serif; }
 .badge-confirmado { background: var(--info-bg); color: var(--accent); }
 .badge-pago { background: var(--ok-bg); color: var(--primary-dark); }
 .badge-vencido { background: var(--danger-bg); color: var(--danger); }
+.badge-anulado { background: #F1F2F4; color: var(--muted); }
+
+.payment-method-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 4px; }
+.payment-method-chip {
+  padding: 11px 8px; border-radius: 10px; border: 1.5px solid var(--border); background: var(--surface);
+  font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer; text-align: center;
+}
+.payment-method-chip.selected { border-color: var(--primary); background: var(--ok-bg); color: var(--primary-dark); }
 
 .card { background: var(--surface); border:1px solid var(--border); border-radius: var(--radius); padding:16px; margin-bottom:14px; }
 .row-between { display:flex; align-items:center; justify-content:space-between; }
