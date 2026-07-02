@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Store, User, Lock, Plus, Search, LogOut, Receipt, AlertCircle,
   ArrowLeft, ShoppingBag, X, Phone, CreditCard, Mail,
-  Camera, Printer, MessageCircle, Calendar, ChevronRight, FileText,
+  Camera, Printer, MessageCircle, Calendar, ChevronRight, FileText, BarChart3,
 } from "lucide-react";
 import {
   createUserWithEmailAndPassword,
@@ -18,7 +18,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage
 import { auth, db, secondaryAuth, storage } from "./firebase";
 import {
   onlyDigits, formatCPF, formatPhone, isValidCPF, brl, fmtDate, todayISO,
-  cpfToEmail, cpfToResetEmail, saleDisplayStatus, computeSaleDueDate, buildInvoiceText, whatsappLink,
+  cpfToEmail, cpfToResetEmail, padPinForAuth, saleDisplayStatus, computeSaleDueDate, buildInvoiceText, whatsappLink,
   buildAcknowledgmentText, generateReceiptNumber, fmtTimestamp, buildReceiptText,
   PAYMENT_METHODS, paymentMethodLabel, buildBalanceLine, buildPurchaseText,
 } from "./helpers";
@@ -68,6 +68,7 @@ export default function App() {
   const [detailReceipts, setDetailReceipts] = useState(null);
   const [confirmPayModal, setConfirmPayModal] = useState(null); // { saleIds, items, total, paymentMethod }
   const [showReceipt, setShowReceipt] = useState(null);
+  const [showReceiptOwedAfter, setShowReceiptOwedAfter] = useState(0);
 
   // ---------- undo a payment ----------
   const [undoModal, setUndoModal] = useState(null); // receipt
@@ -95,6 +96,10 @@ export default function App() {
   const [salePinResetKey, setSalePinResetKey] = useState(0);
   const [salePinBusy, setSalePinBusy] = useState(false);
   const [saleCustomerOwed, setSaleCustomerOwed] = useState(0);
+  const [showLimitOverride, setShowLimitOverride] = useState(false);
+  const [limitOverridePassword, setLimitOverridePassword] = useState("");
+  const [limitOverrideError, setLimitOverrideError] = useState("");
+  const [limitOverrideAuthorized, setLimitOverrideAuthorized] = useState(false);
 
   // ---------- credit limit editing (detail page) ----------
   const [editingLimit, setEditingLimit] = useState(false);
@@ -281,7 +286,7 @@ export default function App() {
         return;
       }
       const email = cpfToEmail(cpfDigits);
-      const cred = await createUserWithEmailAndPassword(secondaryAuth, email, pin);
+      const cred = await createUserWithEmailAndPassword(secondaryAuth, email, padPinForAuth(pin));
       const uid = cred.user.uid;
       await signOut(secondaryAuth);
 
@@ -340,6 +345,28 @@ export default function App() {
   const saleAvailable = saleCustomer && saleCustomer.creditLimit ? saleCustomer.creditLimit - saleCustomerOwed : null;
   const saleExceedsLimit = saleAvailable !== null && saleVal > 0 && saleVal > saleAvailable;
 
+  useEffect(() => {
+    setShowLimitOverride(false);
+    setLimitOverridePassword("");
+    setLimitOverrideError("");
+    setLimitOverrideAuthorized(false);
+  }, [saleCustomerId, saleValue]);
+
+  const authorizeOverrideAndProceed = async () => {
+    if (!limitOverridePassword || !storeConfig?.email) return;
+    setBusy(true);
+    try {
+      await signInWithEmailAndPassword(auth, storeConfig.email, limitOverridePassword);
+      setLimitOverrideAuthorized(true);
+      setShowLimitOverride(false);
+      setLimitOverridePassword("");
+      goToSalePin();
+    } catch (e) {
+      setLimitOverrideError("Senha incorreta.");
+    }
+    setBusy(false);
+  };
+
   const saleTermText = saleCustomer
     ? buildAcknowledgmentText({
         storeName: storeConfig?.storeName,
@@ -361,6 +388,7 @@ export default function App() {
   const cancelSalePin = () => {
     setSaleStep("form");
     setSalePinError("");
+    setLimitOverrideAuthorized(false);
   };
 
   const onSalePinComplete = async (pin) => {
@@ -369,7 +397,7 @@ export default function App() {
     setSalePinBusy(true);
     setSalePinError("");
     try {
-      await signInWithEmailAndPassword(secondaryAuth, customer.email, pin);
+      await signInWithEmailAndPassword(secondaryAuth, customer.email, padPinForAuth(pin));
       await signOut(secondaryAuth);
 
       const val = parseFloat(saleValue.replace(",", "."));
@@ -391,6 +419,7 @@ export default function App() {
         confirmedAt: serverTimestamp(),
         acknowledgment,
         termAcceptedAt: serverTimestamp(),
+        limitOverride: limitOverrideAuthorized,
         createdBy: adminUid,
         createdAt: serverTimestamp(),
       });
@@ -426,6 +455,7 @@ export default function App() {
   const finishSaleFlow = () => {
     setLastSaleInfo(null);
     setSaleStep("form");
+    setLimitOverrideAuthorized(false);
   };
 
   // ---------- customer detail ----------
@@ -506,9 +536,11 @@ export default function App() {
       await Promise.all((undoModal.saleIds || []).map((id) => updateDoc(doc(db, "sales", id), { status: "confirmed" })));
       await updateDoc(doc(db, "receipts", undoModal.id), { voided: true, voidedAt: new Date() });
 
-      const sales = await loadSalesFor(detailCustomerId);
-      setDetailSales(sales.sort((a, b) => (a.date < b.date ? 1 : -1)));
-      await loadDetailReceipts(detailCustomerId);
+      if (detailCustomerId === undoModal.customerUid) {
+        const sales = await loadSalesFor(detailCustomerId);
+        setDetailSales(sales.sort((a, b) => (a.date < b.date ? 1 : -1)));
+        await loadDetailReceipts(detailCustomerId);
+      }
 
       setUndoModal(null);
       showToast("Pagamento desfeito.");
@@ -518,14 +550,23 @@ export default function App() {
     setBusy(false);
   };
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!showReceipt) { setShowReceiptOwedAfter(0); return; }
+    (async () => {
+      const sales = await loadSalesFor(showReceipt.customerUid);
+      const owed = sales.filter((s) => s.status === "confirmed").reduce((a, s) => a + s.value, 0);
+      if (!cancelled) setShowReceiptOwedAfter(owed);
+    })();
+    return () => { cancelled = true; };
+  }, [showReceipt]);
+
   const sendReceiptWhatsapp = () => {
     if (!showReceipt) return;
-    const customer = customersIndex.find((c) => c.id === showReceipt.customerUid) || detailCustomer;
-    const phone = customer?.phone;
-    if (!phone) return showToast("Esse cliente não tem telefone cadastrado", true);
-    const owedAfter = Math.max(detailOwed, 0);
-    const text = buildReceiptText({ storeName: storeConfig?.storeName, receipt: showReceipt, customer, owedAfter });
-    window.open(whatsappLink(phone, text), "_blank");
+    const customer = customersIndex.find((c) => c.id === showReceipt.customerUid);
+    if (!customer?.phone) return showToast("Esse cliente não tem telefone cadastrado", true);
+    const text = buildReceiptText({ storeName: storeConfig?.storeName, receipt: showReceipt, customer, owedAfter: showReceiptOwedAfter });
+    window.open(whatsappLink(customer.phone, text), "_blank");
   };
 
   const startEditLimit = () => {
@@ -587,7 +628,7 @@ export default function App() {
     setBusy(true);
     try {
       const newEmail = cpfToResetEmail(resetPinModal.cpf);
-      const cred = await createUserWithEmailAndPassword(secondaryAuth, newEmail, pin);
+      const cred = await createUserWithEmailAndPassword(secondaryAuth, newEmail, padPinForAuth(pin));
       await signOut(secondaryAuth);
       await updateDoc(doc(db, "customers", resetPinModal.customerId), { email: newEmail });
       setCustomersIndex((prev) => prev.map((c) => (c.id === resetPinModal.customerId ? { ...c, email: newEmail } : c)));
@@ -767,13 +808,32 @@ export default function App() {
                     <div className={saleExceedsLimit ? "warn-banner" : "info-banner"}>
                       <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
                       Limite de crédito: <strong>{brl(saleCustomer.creditLimit)}</strong> · Disponível: <strong>{brl(saleAvailable)}</strong>
-                      {saleExceedsLimit && <> — esta compra ultrapassa o limite do cliente.</>}
+                      {saleExceedsLimit && <> — esta compra ultrapassa o limite disponível do cliente e não pode ser lançada sem autorização.</>}
                     </div>
                   )}
 
-                  <button className="btn btn-primary" onClick={goToSalePin} style={{ marginTop: 6 }}>
-                    Lançar venda
-                  </button>
+                  {!saleExceedsLimit ? (
+                    <button className="btn btn-primary" onClick={goToSalePin} style={{ marginTop: 6 }}>
+                      Lançar venda
+                    </button>
+                  ) : !showLimitOverride ? (
+                    <button className="btn btn-outline" onClick={() => setShowLimitOverride(true)} style={{ marginTop: 6 }}>
+                      <Lock size={15} /> Autorizar mesmo assim
+                    </button>
+                  ) : (
+                    <div className="card" style={{ marginTop: 6 }}>
+                      <label className="field-label">Senha do mercado para autorizar</label>
+                      <input className="field" type="password" value={limitOverridePassword} autoFocus
+                        onChange={(e) => { setLimitOverridePassword(e.target.value); setLimitOverrideError(""); }}
+                        onKeyDown={(e) => e.key === "Enter" && authorizeOverrideAndProceed()} />
+                      {limitOverrideError && <div style={{ color: "var(--danger)", fontSize: 12.5, marginTop: -8, marginBottom: 12 }}>{limitOverrideError}</div>}
+                      <div className="action-row" style={{ marginTop: 0 }}>
+                        <button className="btn btn-outline btn-sm" onClick={() => { setShowLimitOverride(false); setLimitOverridePassword(""); }} disabled={busy}>Cancelar</button>
+                        <button className="btn btn-primary btn-sm" onClick={authorizeOverrideAndProceed} disabled={busy || !limitOverridePassword}>Autorizar e continuar</button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="warn-banner" style={{ marginTop: 12 }}>
                     <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
                     Em seguida, entregue o aparelho para o cliente digitar a senha dele e confirmar.
@@ -827,6 +887,16 @@ export default function App() {
                   </div>
                   <CobrancasTab customersIndex={customersIndex} openDetail={openDetail} loadSalesFor={loadSalesFor} search={cobrancaSearch} />
                 </>
+              )}
+
+              {adminTab === "relatorios" && (
+                <RelatoriosTab
+                  customersIndex={customersIndex}
+                  loadSalesFor={loadSalesFor}
+                  adminUid={adminUid}
+                  openDetail={openDetail}
+                  onOpenReceipt={(r) => setShowReceipt(r)}
+                />
               )}
             </>
           )}
@@ -947,6 +1017,11 @@ export default function App() {
                             <span>Venda: {fmtDate(s.date)}</span>
                             <span>Vence: {fmtDate(s.dueDate)}</span>
                           </div>
+                          {s.limitOverride && (
+                            <div className="sale-meta" style={{ color: "var(--warn)" }}>
+                              <AlertCircle size={12} /> Autorizada acima do limite de crédito
+                            </div>
+                          )}
                         </div>
                         <Badge kind={saleDisplayStatus(s)} />
                       </div>
@@ -1005,11 +1080,17 @@ export default function App() {
               <button className={"tab-btn" + (adminTab === "clientes" ? " active" : "")} onClick={() => { setAdminTab("clientes"); setSaleStep("form"); }}>
                 <User size={19} /> Clientes
               </button>
-              <button className={"tab-btn" + (adminTab === "venda" ? " active" : "")} onClick={() => setAdminTab("venda")}>
-                <ShoppingBag size={19} /> Nova venda
+              <button className="tab-fab-wrap" onClick={() => setAdminTab("venda")}>
+                <div className={"tab-fab" + (adminTab === "venda" ? " active" : "")}>
+                  <ShoppingBag size={22} />
+                </div>
+                <span className="tab-fab-label">Venda</span>
               </button>
               <button className={"tab-btn" + (adminTab === "cobrancas" ? " active" : "")} onClick={() => { setAdminTab("cobrancas"); setSaleStep("form"); }}>
                 <Receipt size={19} /> Cobranças
+              </button>
+              <button className={"tab-btn" + (adminTab === "relatorios" ? " active" : "")} onClick={() => { setAdminTab("relatorios"); setSaleStep("form"); }}>
+                <BarChart3 size={19} /> Relatórios
               </button>
             </div>
           </div>
@@ -1047,7 +1128,7 @@ export default function App() {
               {custStep === "pin1" && (
                 <div style={{ textAlign: "center" }}>
                   <div className="section-title" style={{ justifyContent: "center" }}>Senha do cliente</div>
-                  <div className="pin-hint">Peça para {newCust.name.split(" ")[0] || "o cliente"} criar uma senha de 6 dígitos</div>
+                  <div className="pin-hint">Peça para {newCust.name.split(" ")[0] || "o cliente"} criar uma senha de 4 dígitos</div>
                   <PinPad resetKey={custPinResetKey} onComplete={onFirstPinComplete} />
                   <div className="pin-error">{custPinError}</div>
                   <button className="link-btn" onClick={() => setCustStep("info")}>Voltar</button>
@@ -1258,7 +1339,7 @@ export default function App() {
               {resetPinStep === "pin1" && (
                 <div style={{ textAlign: "center" }}>
                   <div className="section-title" style={{ justifyContent: "center" }}>Nova senha</div>
-                  <div className="pin-hint">Peça para {resetPinModal.customerName.split(" ")[0]} criar uma nova senha de 6 dígitos</div>
+                  <div className="pin-hint">Peça para {resetPinModal.customerName.split(" ")[0]} criar uma nova senha de 4 dígitos</div>
                   <PinPad resetKey={resetPinResetKey} onComplete={onResetFirstPin} />
                   <div className="pin-error">{resetPinError}</div>
                   <button className="link-btn" onClick={() => setResetPinModal(null)}>Cancelar</button>
@@ -1325,6 +1406,127 @@ function CobrancasTab({ customersIndex, openDetail, loadSalesFor, search }) {
           </div>
         </div>
       ))}
+    </>
+  );
+}
+
+function RelatoriosTab({ customersIndex, loadSalesFor, adminUid, openDetail, onOpenReceipt }) {
+  const [subTab, setSubTab] = useState("receber"); // receber, pagamentos
+  const [balances, setBalances] = useState(null);
+  const [receipts, setReceipts] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const results = [];
+      for (const c of customersIndex) {
+        const sales = await loadSalesFor(c.id);
+        const owed = sales.filter((s) => s.status === "confirmed").reduce((a, s) => a + s.value, 0);
+        const overdue = sales.some((s) => s.status === "confirmed" && s.dueDate < todayISO());
+        if (owed > 0) results.push({ ...c, owed, overdue });
+      }
+      if (!cancelled) {
+        results.sort((a, b) => b.owed - a.owed);
+        setBalances(results);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customersIndex]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!adminUid) return;
+    (async () => {
+      const q = query(collection(db, "receipts"), where("adminUid", "==", adminUid));
+      const snap = await getDocs(q);
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      list.sort((a, b) => (b.paidAt?.seconds || 0) - (a.paidAt?.seconds || 0));
+      if (!cancelled) setReceipts(list);
+    })();
+    return () => { cancelled = true; };
+  }, [adminUid]);
+
+  const totalReceber = balances ? balances.reduce((a, c) => a + c.owed, 0) : 0;
+  const totalRecebido = receipts ? receipts.filter((r) => !r.voided).reduce((a, r) => a + r.total, 0) : 0;
+
+  return (
+    <>
+      <div className="row-between">
+        <div className="section-title" style={{ margin: 0 }}><BarChart3 size={16} /> Relatórios</div>
+        <button className="link-btn no-print" onClick={() => window.print()}>
+          <Printer size={13} style={{ display: "inline", marginRight: 4 }} />
+          Imprimir
+        </button>
+      </div>
+
+      <div className="payment-method-grid no-print" style={{ marginTop: 12, marginBottom: 16 }}>
+        <button type="button" className={"payment-method-chip" + (subTab === "receber" ? " selected" : "")} onClick={() => setSubTab("receber")}>
+          A receber
+        </button>
+        <button type="button" className={"payment-method-chip" + (subTab === "pagamentos" ? " selected" : "")} onClick={() => setSubTab("pagamentos")}>
+          Pagamentos
+        </button>
+      </div>
+
+      <div className="invoice-print-root">
+        <div className="report-print-title">
+          {subTab === "receber" ? "Relatório — Contas a receber" : "Relatório — Pagamentos recebidos"}
+          <span className="report-print-date">{fmtTimestamp(new Date())}</span>
+        </div>
+
+        {subTab === "receber" && (
+          <>
+            <div className="card total-box">
+              <div className="total-label">Total a receber</div>
+              <div className="total-value">{brl(totalReceber)}</div>
+            </div>
+            {balances === null && <div className="empty">Carregando...</div>}
+            {balances && balances.length === 0 && (
+              <div className="empty"><Receipt size={30} /><div>Nenhuma cobrança em aberto.</div></div>
+            )}
+            {balances && balances.map((c) => (
+              <div className="cust-row" key={c.id} onClick={() => openDetail(c.id)}>
+                <div>
+                  <div className="cust-name">{c.name}</div>
+                  <div className="cust-cpf">{formatCPF(c.cpf)}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div className="owed-amt pos">{brl(c.owed)}</div>
+                  {c.overdue && <Badge kind="VENCIDO" />}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+
+        {subTab === "pagamentos" && (
+          <>
+            <div className="card total-box">
+              <div className="total-label">Total recebido</div>
+              <div className="total-value ok">{brl(totalRecebido)}</div>
+            </div>
+            {receipts === null && <div className="empty">Carregando...</div>}
+            {receipts && receipts.length === 0 && (
+              <div className="empty"><FileText size={30} /><div>Nenhum pagamento registrado ainda.</div></div>
+            )}
+            {receipts && receipts.map((r) => (
+              <div className="cust-row" key={r.id} onClick={() => onOpenReceipt(r)}>
+                <div>
+                  <div className="cust-name">{r.customerName}</div>
+                  <div className="cust-cpf">
+                    {fmtTimestamp(r.paidAt)}{r.paymentMethod ? ` · ${paymentMethodLabel(r.paymentMethod)}` : ""}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div className={"owed-amt " + (r.voided ? "zero" : "pos")}>{brl(r.total)}</div>
+                  {r.voided && <Badge kind="ANULADO" />}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
     </>
   );
 }

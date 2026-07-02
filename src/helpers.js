@@ -57,6 +57,13 @@ export const cpfToEmail = (cpfDigits) => `cliente.${cpfDigits}@caderneta.fiado`;
 // cadastro do cliente passa a apontar para essa nova conta).
 export const cpfToResetEmail = (cpfDigits) => `cliente.${cpfDigits}.${Date.now()}@caderneta.fiado`;
 
+// O Firebase Auth exige senha com pelo menos 6 caracteres. Como a senha
+// do cliente é um PIN de 4 dígitos (mais fácil de digitar no dia a dia),
+// completamos com um sufixo fixo antes de enviar para o Firebase — o
+// cliente nunca vê nem digita esse sufixo, só os 4 dígitos do PIN.
+export const CUSTOMER_PIN_LENGTH = 4;
+export const padPinForAuth = (pin) => `${pin}-pin`;
+
 export function saleDisplayStatus(sale) {
   if (sale.status === "paid") return "PAGO";
   if (sale.dueDate && sale.dueDate < todayISO()) return "VENCIDO";

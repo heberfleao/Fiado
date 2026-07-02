@@ -32,6 +32,16 @@ para confirmar e reconhecer a compra. Funciona em qualquer navegador
 - Redefinição da senha do cliente caso ele esqueça — pode ser feita pela
   ficha do cliente ou direto na hora da confirmação da compra, caso ele
   não lembre a senha no pinpad.
+- Aba de Relatórios com duas visões: tudo o que está a receber (todos os
+  clientes com saldo em aberto) e todos os pagamentos já recebidos, com
+  totais e opção de imprimir.
+- Botão de "Nova venda" em destaque na barra de navegação, para ser
+  reconhecido e tocado mais rápido no balcão.
+- Vendas que ultrapassam o limite de crédito disponível do cliente não
+  são autorizadas automaticamente — é preciso a senha do mercado para
+  liberar mesmo assim, e isso fica registrado na venda.
+- Senha do cliente agora tem 4 dígitos (mais rápido de digitar no
+  balcão).
 - Forma de pagamento (dinheiro, cartão de crédito, cartão de débito ou
   Pix) selecionada ao confirmar um pagamento, salva no recibo.
 - Opção de desfazer um pagamento (pede a senha do mercado para confirmar),
@@ -55,6 +65,12 @@ Ao subir uma nova versão dos arquivos (GitHub + Vercel), verifique se o
 arquivo `firestore.rules` mudou desde a última vez. Se mudou, é preciso
 colar o conteúdo atualizado na aba **Regras** do Firestore no console do
 Firebase e publicar de novo — o Vercel não faz isso automaticamente.
+
+**Atenção ao atualizar para a versão com senha de 4 dígitos:** clientes
+cadastrados antes dessa mudança tinham senha de 6 dígitos e não vão
+conseguir confirmar compras com o novo teclado (que agora só aceita 4
+dígitos). Use "Redefinir senha do cliente" na ficha de cada cliente já
+cadastrado para dar a eles uma nova senha de 4 dígitos.
 
 ## Aviso importante
 

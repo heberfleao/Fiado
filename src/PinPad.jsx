@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 
-export default function PinPad({ length = 6, onComplete, busy = false, resetKey, compact = false }) {
+export default function PinPad({ length = 4, onComplete, busy = false, resetKey, compact = false }) {
   const [digits, setDigits] = useState("");
 
   // Parent changes resetKey to force-clear the pad (e.g. after a wrong PIN).
