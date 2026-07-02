@@ -1448,7 +1448,6 @@ function RelatoriosTab({ customersIndex, loadSalesFor, adminUid, openDetail, onO
   }, [adminUid]);
 
   const totalReceber = balances ? balances.reduce((a, c) => a + c.owed, 0) : 0;
-  const totalRecebido = receipts ? receipts.filter((r) => !r.voided).reduce((a, r) => a + r.total, 0) : 0;
 
   return (
     <>
@@ -1502,10 +1501,6 @@ function RelatoriosTab({ customersIndex, loadSalesFor, adminUid, openDetail, onO
 
         {subTab === "pagamentos" && (
           <>
-            <div className="card total-box">
-              <div className="total-label">Total recebido</div>
-              <div className="total-value ok">{brl(totalRecebido)}</div>
-            </div>
             {receipts === null && <div className="empty">Carregando...</div>}
             {receipts && receipts.length === 0 && (
               <div className="empty"><FileText size={30} /><div>Nenhum pagamento registrado ainda.</div></div>
