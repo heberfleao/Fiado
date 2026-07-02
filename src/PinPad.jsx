@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 
-export default function PinPad({ length = 6, onComplete, busy = false, resetKey }) {
+export default function PinPad({ length = 6, onComplete, busy = false, resetKey, compact = false }) {
   const [digits, setDigits] = useState("");
 
   // Parent changes resetKey to force-clear the pad (e.g. after a wrong PIN).
@@ -26,12 +26,12 @@ export default function PinPad({ length = 6, onComplete, busy = false, resetKey 
 
   return (
     <div>
-      <div className="pinpad-dots">
+      <div className={"pinpad-dots" + (compact ? " compact" : "")}>
         {Array.from({ length }).map((_, i) => (
           <div key={i} className={"pinpad-dot" + (i < digits.length ? " filled" : "")} />
         ))}
       </div>
-      <div className="pinpad-grid">
+      <div className={"pinpad-grid" + (compact ? " compact" : "")}>
         {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
           <button key={n} type="button" className="pinpad-key" onClick={() => press(String(n))} disabled={busy}>
             {n}

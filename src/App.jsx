@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Store, User, Lock, Plus, Search, LogOut, Receipt, AlertCircle,
-  ArrowLeft, ShoppingBag, X, Phone, CreditCard, Mail, ShieldCheck,
+  ArrowLeft, ShoppingBag, X, Phone, CreditCard, Mail,
   Camera, Printer, MessageCircle, Calendar, ChevronRight, FileText,
 } from "lucide-react";
 import {
@@ -76,7 +76,7 @@ export default function App() {
   const [custPinResetKey, setCustPinResetKey] = useState(0);
 
   // ---------- new sale flow ----------
-  const [saleStep, setSaleStep] = useState("form"); // form, term, pin
+  const [saleStep, setSaleStep] = useState("form"); // form, pin
   const [saleSearch, setSaleSearch] = useState("");
   const [saleCustomerId, setSaleCustomerId] = useState("");
   const [saleValue, setSaleValue] = useState("");
@@ -340,14 +340,10 @@ export default function App() {
       })
     : "";
 
-  const goToSaleTerm = () => {
+  const goToSalePin = () => {
     if (!saleCustomerId) return showToast("Selecione um cliente", true);
     const val = parseFloat(saleValue.replace(",", "."));
     if (!val || val <= 0) return showToast("Informe um valor válido", true);
-    setSaleStep("term");
-  };
-
-  const proceedFromTerm = () => {
     setSalePinError("");
     setSaleStep("pin");
   };
@@ -711,7 +707,7 @@ export default function App() {
                     </div>
                   )}
 
-                  <button className="btn btn-primary" onClick={goToSaleTerm} style={{ marginTop: 6 }}>
+                  <button className="btn btn-primary" onClick={goToSalePin} style={{ marginTop: 6 }}>
                     Lançar venda
                   </button>
                   <div className="warn-banner" style={{ marginTop: 12 }}>
@@ -721,33 +717,22 @@ export default function App() {
                 </>
               )}
 
-              {adminTab === "venda" && saleStep === "term" && (
-                <div>
-                  <div className="section-title"><FileText size={16} /> Termo de reconhecimento</div>
-                  <div className="card term-card">
-                    {saleTermText}
-                  </div>
-                  <div className="info-banner">
-                    <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
-                    Peça para o cliente ler o texto acima antes de digitar a senha. O texto fica salvo junto com esta compra.
-                  </div>
-                  <div className="action-row" style={{ marginTop: 6 }}>
-                    <button className="btn btn-outline" onClick={() => setSaleStep("form")}>Voltar</button>
-                    <button className="btn btn-primary" onClick={proceedFromTerm}>Cliente concorda — continuar</button>
-                  </div>
-                </div>
-              )}
-
               {adminTab === "venda" && saleStep === "pin" && (
-                <div className="center-screen" style={{ paddingTop: 10 }}>
-                  <div className="icon-circle"><ShieldCheck size={22} /></div>
-                  <div className="pin-customer-name">{saleCustomer?.name}</div>
-                  <div className="pin-customer-value">{brl(saleVal)}</div>
-                  <div className="pin-hint">Entregue o aparelho para o cliente digitar a senha e confirmar a compra</div>
-                  <PinPad resetKey={salePinResetKey} busy={salePinBusy} onComplete={onSalePinComplete} />
+                <div className="confirm-screen">
+                  <div className="confirm-header">
+                    <div className="confirm-name">{saleCustomer?.name}</div>
+                    <div className="confirm-value">{brl(saleVal)}</div>
+                  </div>
+
+                  <div className="term-box">{saleTermText}</div>
+
+                  <PinPad compact resetKey={salePinResetKey} busy={salePinBusy} onComplete={onSalePinComplete} />
                   <div className="pin-error">{salePinError}</div>
-                  <button className="link-btn" style={{ marginTop: 14 }} onClick={cancelSalePin} disabled={salePinBusy}>Cancelar</button>
-                  <button className="link-btn" onClick={() => openResetPin(saleCustomer)} disabled={salePinBusy}>Cliente esqueceu a senha? Redefinir agora</button>
+
+                  <div className="confirm-footer">
+                    <button className="link-btn" onClick={cancelSalePin} disabled={salePinBusy}>Cancelar</button>
+                    <button className="link-btn" onClick={() => openResetPin(saleCustomer)} disabled={salePinBusy}>Esqueceu a senha?</button>
+                  </div>
                 </div>
               )}
 
@@ -924,7 +909,7 @@ export default function App() {
           )}
         </div>
 
-        {screen === "admin" && !detailCustomerId && (
+        {screen === "admin" && !detailCustomerId && !(adminTab === "venda" && saleStep === "pin") && (
           <div className="tabs">
             <div className="tabs-inner">
               <button className={"tab-btn" + (adminTab === "clientes" ? " active" : "")} onClick={() => { setAdminTab("clientes"); setSaleStep("form"); }}>

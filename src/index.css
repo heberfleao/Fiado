@@ -145,10 +145,13 @@ body { font-family: 'Inter', -apple-system, sans-serif; }
 .info-banner { background: var(--info-bg); border:1px solid #CFE0FC; color: #1D4ED8; padding:10px 12px; border-radius:10px; font-size:12.5px; margin: 4px 0 14px; display:flex; gap:8px; align-items:flex-start; line-height: 1.5; }
 
 .pinpad-dots { display:flex; gap:14px; justify-content:center; margin: 22px 0 30px; }
+.pinpad-dots.compact { gap: 10px; margin: 10px 0 14px; }
 .pinpad-dot { width:13px; height:13px; border-radius:50%; border:2px solid var(--text); background: transparent; transition: background .1s ease; }
 .pinpad-dot.filled { background: var(--text); }
 .pinpad-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:13px; max-width: 250px; margin: 0 auto; }
+.pinpad-grid.compact { gap: 8px; max-width: 210px; }
 .pinpad-key { aspect-ratio: 1/1; border-radius:50%; border: 1.5px solid var(--border); background: var(--surface); font-size:21px; font-weight:600; font-family:'IBM Plex Mono',monospace; display:flex; align-items:center; justify-content:center; cursor:pointer; color: var(--text); }
+.pinpad-grid.compact .pinpad-key { font-size: 17px; }
 .pinpad-key:active { background: var(--bg); }
 .pinpad-key.empty { visibility:hidden; border:none; }
 .pinpad-key.action { border:none; background:transparent; color: var(--muted); font-size:17px; }
@@ -157,7 +160,33 @@ body { font-family: 'Inter', -apple-system, sans-serif; }
 .pin-customer-name { font-weight: 700; font-size:18px; text-align:center; margin-bottom: 2px; }
 .pin-customer-value { text-align:center; font-family:'IBM Plex Mono',monospace; font-size:26px; font-weight:700; color: var(--danger); margin-bottom: 6px; }
 .pin-hint { text-align:center; font-size:13px; color: var(--muted); margin-bottom: 4px; }
-.pin-error { text-align:center; font-size:13px; color: var(--danger); font-weight:600; margin: 10px 0 0; min-height: 18px; }
+.pin-error { text-align:center; font-size:13px; color: var(--danger); font-weight:600; margin: 8px 0 0; min-height: 16px; }
+
+.confirm-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-height: calc(100vh - 210px);
+  justify-content: center;
+  gap: 10px;
+  padding-top: 2px;
+}
+.confirm-header { text-align: center; }
+.confirm-name { font-weight: 700; font-size: 17px; }
+.confirm-value { font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 25px; color: var(--danger); margin-top: 2px; }
+.term-box {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  max-height: 92px;
+  overflow-y: auto;
+}
+.confirm-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
+.confirm-footer .link-btn { padding: 6px 2px; }
 
 .invoice-modal { max-width: 440px; }
 .invoice-print-root { background: var(--surface); }
